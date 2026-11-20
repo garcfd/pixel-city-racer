@@ -50,12 +50,11 @@
   <div class="row" id="speed">SPEED 0</div>
   <div class="row" id="lap">LAP 1/3</div>
   <div class="row" id="time">TIME 0.000</div>
-  <div class="row" id="pos">POS 1/5</div>
   <div class="row" id="zone">ZONE</div>
 </div>
 <!-- speed bar -->
 <div id="speedbar">
-  <div id="speedmax">150</div>
+  <div id="speedmax">200</div>
   <div id="speedtrack"><div id="speedfill"></div></div>
   <div id="speedmin">0</div>
   <div id="senslabel">SENS</div>
@@ -74,7 +73,7 @@
     <span class="k">LEFT / RIGHT</span> &mdash; steer<br>
     <span class="k">UP / DOWN</span> &mdash; adjust target speed (reverse at 0)<br>
     <span class="k">SHIFT</span> &mdash; drift<br>
-    <span class="k">Q / A</span> &mdash; steering sensitivity up / down<br>
+    <span class="k">A / Z</span> &mdash; steering sensitivity up / down<br>
     <span class="k">W</span> &mdash; cycle weather<br>
     <span class="k">R</span> &mdash; restart<br>
     <span class="k">ESC</span> &mdash; close this panel<br>
@@ -84,7 +83,7 @@
 </div>
 <div id="overlay">
   <h1>PIXEL CITY RACER</h1>
-  <p>Arrow keys: LEFT/RIGHT steer, UP accel, DOWN brake.<br>SHIFT = drift, Q/A = steering sensitivity, R = restart.<br>Complete 3 laps to win.</p>
+  <p>Arrow keys: LEFT/RIGHT steer, UP accel, DOWN brake.<br>SHIFT = drift, A/Z = steering sensitivity up/down, R = restart.<br>Complete 3 laps to win.</p>
   <button id="startBtn">START</button>
 </div>
 <script type="module">
@@ -104,17 +103,25 @@ const camera = new THREE.PerspectiveCamera(60, INTERNAL_W/INTERNAL_H, 0.1, 2000)
 
 // ---------- Track generation ----------
 function generateTrack() {
-  const n = 20;                                   // control points (i=5 and i=15 are the crossing)
-  const A = 230 + Math.random()*40, B = 270 + Math.random()*50;   // figure-of-eight width / height
+  // More control points create a noticeably more flowing circuit while the
+  // sin(2t) envelope keeps both figure-eight crossing points exactly aligned.
+  const n = 40;
+  const A = 230 + Math.random()*40, B = 270 + Math.random()*50;
   const ph = [Math.random()*6.28, Math.random()*6.28, Math.random()*6.28];
   const pts = [];
   for (let i=0;i<n;i++){
-    const t = (i/n)*Math.PI*2, cross = (i===5 || i===15);
-    let x = A*Math.cos(t), z = B*Math.sin(t)*Math.cos(t);
-    if (!cross){ x += (Math.random()-0.5)*30; z += (Math.random()-0.5)*30; }
-    // sin(t) lifts one loop over the other; the even harmonics add hills without changing the crossing gap
-    const hump = 4*Math.sin(2*t+ph[0]) + 2.5*Math.sin(4*t+ph[1]) + 2*Math.sin(6*t+ph[2]);
-    const y = 20 + 9*Math.sin(t) + hump + (cross ? 0 : (Math.random()-0.5)*2);
+    const t = (i/n)*Math.PI*2;
+    const crossing = (i===n/4 || i===3*n/4);
+    const bend = Math.sin(2*t);
+    // Broad, flowing deviations only: avoid high-frequency wiggles that create hairpins.
+    // A little more lobe-to-lobe variation, using broad curves that stay
+    // comfortable for the existing drift handling.
+    let x = A*Math.cos(t) + bend*(15*Math.sin(3*t+ph[0]) + 6*Math.sin(5*t+ph[1]));
+    let z = B*Math.sin(t)*Math.cos(t) + bend*(17*Math.cos(3*t+ph[1]) + 6.5*Math.sin(5*t+ph[2]));
+    if (!crossing){ x += (Math.random()-0.5)*3.5; z += (Math.random()-0.5)*3.5; }
+    // Keep the over/under height separation at the crossover.
+    const hump = 4.5*Math.sin(2*t+ph[0]) + 3*Math.sin(4*t+ph[1]) + 2.5*Math.sin(6*t+ph[2]);
+    const y = 20 + 9*Math.sin(t) + hump + (crossing ? 0 : (Math.random()-0.5)*1.5);
     pts.push(new THREE.Vector3(x, y, z));
   }
   return new THREE.CatmullRomCurve3(pts, true, 'centripetal');
@@ -158,14 +165,14 @@ const BIOMES = {
   city:   { name:'CITY',   ground:0x6c7570, sky:0x87ceeb, amp:8  },
   forest: { name:'FOREST', ground:0x2f6a2c, sky:0x8ad0e6, amp:30 },
   desert: { name:'DESERT', ground:0xd1a65c, sky:0xf2cf9a, amp:24 },
-  alpine: { name:'ALPINE', ground:0xdfe9ef, sky:0xa8c3df, amp:48 },
+  alpine: { name:'ALPINE', ground:0xe8f0f5, sky:0xb9d2e8, amp:58 },
 };
 const biomeKeys = Object.keys(BIOMES);
 for (let i=biomeKeys.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [biomeKeys[i],biomeKeys[j]]=[biomeKeys[j],biomeKeys[i]]; }
 const sampleBiome = new Array(N);
 {
   const start = Math.floor(Math.random()*N);
-  const w = biomeKeys.map(k=>(0.7+Math.random()*0.7)*(k==='alpine'?1.9:1));   // alpine zone is much longer
+  const w = biomeKeys.map(k=>(0.7+Math.random()*0.7)*(k==='alpine'?2.8:1));   // alpine zone is much longer
   const wSum = w.reduce((a,b)=>a+b,0);
   let acc = 0;
   biomeKeys.forEach((k,zi)=>{
@@ -370,8 +377,8 @@ function buildTerrain(group){
     c.copy(sampleGround[nn.i]);
     c.multiplyScalar(0.88 + 0.24*(Math.abs(Math.sin(x*12.9898 + z*78.233)*43758.5453) % 1));
     // snow caps on high ground, but not on the road shoulder
-    const sn = smooth(22,32,h) * smooth(TRACK_HALF+5, TRACK_HALF+30, nn.d);
-    if (sn > 0) c.lerp(snow, sn*0.9);
+    const sn = Math.max(sampleBiome[nn.i]==='alpine' ? 0.72 : 0, smooth(15,27,h)) * smooth(TRACK_HALF+5, TRACK_HALF+25, nn.d);
+    if (sn > 0) c.lerp(snow, Math.min(0.96, sn*0.96));
     for (const b of bridges) if (h < b.waterY+1.6 && Math.hypot(x-b.cx,z-b.cz) < BR.R1) c.lerp(mud, 0.75);
     col[k*3] = c.r; col[k*3+1] = c.g; col[k*3+2] = c.b;
   }
@@ -390,7 +397,7 @@ function buildTerrain(group){
   geo.computeVertexNormals();
   group.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors:true, flatShading:true })));
   // far ground beyond the terrain edge
-  const far = new THREE.Mesh(new THREE.PlaneGeometry(4000,4000), new THREE.MeshLambertMaterial({ color:0x5d7048 }));
+  const far = new THREE.Mesh(new THREE.PlaneGeometry(4000,4000), new THREE.MeshLambertMaterial({ color:0xc5d5df }));
   far.rotation.x = -Math.PI/2; far.position.y = -0.4;
   group.add(far);
 }
@@ -429,6 +436,8 @@ const KINDS = {
   cactus: mergeGeos([ part(new THREE.CylinderGeometry(0.45,0.5,5,6),CACT,0,2.5,0), part(new THREE.BoxGeometry(1.5,0.5,0.5),CACT,0.9,2.6,0), part(new THREE.BoxGeometry(0.5,1.5,0.5),CACT,1.4,3.3,0), part(new THREE.BoxGeometry(1.2,0.5,0.5),CACT,-0.8,3.4,0), part(new THREE.BoxGeometry(0.5,1.3,0.5),CACT,-1.2,4.0,0) ]),
   rock: mergeGeos([ part(new THREE.DodecahedronGeometry(1.4,0),0x8b8b8b,0,0.6,0) ]),
   snowman: mergeGeos([ part(new THREE.IcosahedronGeometry(1.2,1),0xf4f8fb,0,1.0,0), part(new THREE.IcosahedronGeometry(0.9,1),0xf4f8fb,0,2.6,0), part(new THREE.IcosahedronGeometry(0.6,1),0xf4f8fb,0,3.8,0), part(new THREE.ConeGeometry(0.14,0.8,5).rotateX(Math.PI/2),0xff8a1e,0,3.8,0.85), part(new THREE.BoxGeometry(0.9,0.5,0.9),0x222222,0,4.55,0) ]),
+  snowdrift: mergeGeos([ part(new THREE.SphereGeometry(1,7,5),0xf5f9fc,0,0.25,0) ]),
+  peak: mergeGeos([ part(new THREE.ConeGeometry(8,25,5),0x8299aa,0,12.5,0), part(new THREE.ConeGeometry(5.3,13,5),0xf7fbff,0,19,0) ]),
   mesa: mergeGeos([ part(new THREE.BoxGeometry(1,0.7,1),0xa8472a,0,0.35,0), part(new THREE.BoxGeometry(0.92,0.3,0.92),0xc9753f,0,0.85,0) ]),
 };
 
@@ -529,17 +538,100 @@ function buildFeatures(group){
   });
 }
 
+function buildAlpineLandmarks(group){
+  // A distant ring of oversized snowy peaks gives the whole circuit an alpine skyline.
+  const mountainRock = new THREE.MeshLambertMaterial({color:0x71899b, flatShading:true});
+  const mountainSnow = new THREE.MeshLambertMaterial({color:0xf4f8fc, flatShading:true});
+  const peakCount = 18;
+  for(let i=0;i<peakCount;i++){
+    const a = (i/peakCount)*Math.PI*2 + (Math.random()-0.5)*0.12;
+    const radius = TERR_EXT + 45 + Math.random()*105;
+    const x = Math.cos(a)*radius, z = Math.sin(a)*radius;
+    const h = 210 + Math.random()*150, r = 115 + Math.random()*100;
+    // Broad, flat-topped mountain ridges sit on the horizon without cloud-like blobs.
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(r*0.16,r,h,9,1), mountainRock);
+    base.position.set(x,h*0.5-12,z);
+    base.rotation.y = Math.random()*Math.PI;
+    group.add(base);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(r*0.1,r*0.43,h*0.28,9,1), mountainSnow);
+    cap.position.set(x-r*0.08,h*0.87-7,z+r*0.06);
+    cap.rotation.y = base.rotation.y;
+    group.add(cap);
+  }
+
+  // Find a broad alpine clearing well away from the racing surface for a frozen lake.
+  let lakeSpot = null;
+  for(let tries=0;tries<900;tries++){
+    const i = Math.floor(Math.random()*N), side = Math.random()<0.5?-1:1;
+    if(sampleBiome[i] !== 'alpine') continue;
+    const s = samples[i], d = 85 + Math.random()*105;
+    const x = s.p.x+s.side.x*side*d, z = s.p.z+s.side.z*side*d;
+    const nn = nearestXZ(x,z);
+    if(nn.d < 78 || Math.max(Math.abs(x),Math.abs(z)) > TERR_EXT-75 || inWater(x,z)) continue;
+    lakeSpot = {x,z,y:terrainHeight(x,z,nn)+0.9}; break;
+  }
+  if(lakeSpot){
+    const lake = new THREE.Group();
+    const ice = new THREE.Mesh(new THREE.CircleGeometry(1,56), new THREE.MeshPhongMaterial({color:0x55c8f2, emissive:0x245a78, shininess:110, transparent:true, opacity:0.98}));
+    ice.rotation.x=-Math.PI/2; ice.scale.set(112,72,1); lake.add(ice);
+    const sheen = new THREE.Mesh(new THREE.CircleGeometry(1,40), new THREE.MeshBasicMaterial({color:0xe4f8ff,transparent:true,opacity:0.25}));
+    sheen.rotation.x=-Math.PI/2; sheen.position.y=0.22; sheen.scale.set(72,43,1); lake.add(sheen);
+    // Pale cracks and skating-like streaks across the ice.
+    const crackMat = new THREE.MeshBasicMaterial({color:0xd8f5ff,transparent:true,opacity:0.72});
+    for(let j=0;j<13;j++){
+      const len=18+Math.random()*45, crack=new THREE.Mesh(new THREE.BoxGeometry(len,0.16,0.35),crackMat);
+      crack.position.set((Math.random()-0.5)*75,0.24,(Math.random()-0.5)*42); crack.rotation.y=Math.random()*Math.PI; lake.add(crack);
+    }
+    lake.position.set(lakeSpot.x,lakeSpot.y,lakeSpot.z); lake.rotation.y=Math.random()*Math.PI; group.add(lake);
+    // Snowy banks around the ice.
+    const bankMat=new THREE.MeshLambertMaterial({color:0xf1f6f8});
+    for(let j=0;j<18;j++){
+      const a=j/18*Math.PI*2, rr=86+Math.random()*10;
+      const drift=new THREE.Mesh(new THREE.SphereGeometry(1,7,5),bankMat);
+      drift.scale.set(13+Math.random()*12,2.4,9+Math.random()*8);
+      drift.position.set(lakeSpot.x+Math.cos(a)*rr,lakeSpot.y+0.4,lakeSpot.z+Math.sin(a)*rr*0.63); group.add(drift);
+    }
+  }
+
+  // Small timber chalets tucked into the snowy forest clearings.
+  const wood = new THREE.MeshLambertMaterial({color:0x70452b});
+  const darkWood = new THREE.MeshLambertMaterial({color:0x3d2b22});
+  const roof = new THREE.MeshLambertMaterial({color:0x354653});
+  const snowRoof = new THREE.MeshLambertMaterial({color:0xf4f8fb});
+  const glass = new THREE.MeshBasicMaterial({color:0x9ee7ff});
+  const cabinGeo = new THREE.BoxGeometry(13,8,10);
+  for(let i=0; i<N; i+=3){
+    if(sampleBiome[i]!=='alpine' || Math.random()>0.38) continue;
+    const s=samples[i], side=Math.random()<0.5?-1:1, dist=TRACK_HALF+23+Math.random()*38;
+    const x=s.p.x+s.side.x*side*dist, z=s.p.z+s.side.z*side*dist, nn=nearestXZ(x,z);
+    if(nn.d<19 || inWater(x,z) || (tunnelOf[nn.i]>=0 && nn.d<35)) continue;
+    const y=terrainHeight(x,z,nn), g=new THREE.Group();
+    const body=new THREE.Mesh(cabinGeo,wood); body.position.y=4; g.add(body);
+    // Two sloping roof panels make a clear alpine A-frame silhouette.
+    const r1=new THREE.Mesh(new THREE.BoxGeometry(8.2,0.65,12),roof); r1.position.set(-2.1,8.25,0); r1.rotation.z=-0.48; g.add(r1);
+    const r2=new THREE.Mesh(new THREE.BoxGeometry(8.2,0.65,12),roof); r2.position.set(2.1,8.25,0); r2.rotation.z=0.48; g.add(r2);
+    const cap=new THREE.Mesh(new THREE.BoxGeometry(7.4,0.42,12.3),snowRoof); cap.position.set(0,10.05,0); g.add(cap);
+    const door=new THREE.Mesh(new THREE.BoxGeometry(2.1,4.5,0.25),darkWood); door.position.set(0,2.25,5.12); g.add(door);
+    for(const wx of [-4,4]){ const win=new THREE.Mesh(new THREE.BoxGeometry(2.2,2,0.3),glass); win.position.set(wx,4.8,5.13); g.add(win); }
+    const chimney=new THREE.Mesh(new THREE.BoxGeometry(1.6,5,1.6),darkWood); chimney.position.set(-3.7,10, -2.5); g.add(chimney);
+    const chimneySnow=new THREE.Mesh(new THREE.BoxGeometry(2.1,0.55,2.1),snowRoof); chimneySnow.position.set(-3.7,12.6,-2.5); g.add(chimneySnow);
+    g.position.set(x,y,z); g.rotation.y=Math.atan2(s.tan.x,s.tan.z)+(side<0?Math.PI:0); g.scale.setScalar(1.05+Math.random()*0.35); group.add(g);
+  }
+}
+
 function buildScenery(group){
   buildTerrain(group);
   buildFeatures(group);
+  buildAlpineLandmarks(group);
   const inst = {};
   const snowRock = new THREE.Color(1.5,1.55,1.7), grey = new THREE.Color(1,1,1), warm = new THREE.Color(1,0.72,0.5);
   const add = (kind,x,y,z,sx,sy,sz,tint)=>{ (inst[kind] = inst[kind] || []).push({x,y,z,sx,sy,sz,ry:Math.random()*6.28,tint}); };
   const shade = ()=>{ const v = 0.8 + Math.random()*0.3; return new THREE.Color(v,v,v); };
 
   // trees, cacti, rocks and mesas, scattered by zone
-  for (let k=0;k<6500;k++){
-    const s = samples[Math.floor(Math.random()*N)];
+  for (let k=0;k<7800;k++){
+    const si = Math.floor(Math.random()*N);
+    const s = samples[si];
     const side = Math.random()<0.5 ? -1 : 1;
     const dist = TRACK_HALF + 4 + Math.pow(Math.random(),1.5)*110;
     const x = s.p.x + s.side.x*side*dist, z = s.p.z + s.side.z*side*dist;
@@ -551,12 +643,15 @@ function buildScenery(group){
     const r = Math.random(), sc = 0.8 + Math.random()*0.7;
     if (biome==='forest'){
       if (y > 34) continue;
-      if (r < 0.7) add(y>24 ? 'snowPine' : 'pine', x,y-0.5,z, sc,sc*(0.9+Math.random()*0.5),sc, shade());
+      if (r < 0.76) add(y>20 ? 'snowPine' : 'pine', x,y-0.5,z, sc,sc*(0.9+Math.random()*0.5),sc, shade());
+      else if (r < 0.84 && nn.d > 28) add('snowdrift', x,y-0.2,z, 1.8+Math.random()*2.2,0.55,1.8+Math.random()*2.2, grey);
       else add('leafy', x,y-0.5,z, sc,sc,sc, shade());
     } else if (biome==='alpine'){
-      if (r < 0.62) add('snowPine', x,y-0.5,z, sc,sc*(0.9+Math.random()*0.6),sc, shade());
-      else if (r < 0.82) add('rock', x,y-0.3,z, sc*1.5,sc*1.1,sc*1.3, snowRock);
-      else if (r < 0.87) add('snowman', x,y-0.4,z, sc,sc,sc, grey);
+      if (r < 0.48) add('snowPine', x,y-0.5,z, sc,sc*(0.9+Math.random()*0.6),sc, shade());
+      else if (r < 0.66) add('rock', x,y-0.3,z, sc*1.5,sc*1.1,sc*1.3, snowRock);
+      else if (r < 0.72) add('snowman', x,y-0.4,z, sc,sc,sc, grey);
+      else if (r < 0.82 && nn.d > 32) add('snowdrift', x,y-0.2,z, 2+Math.random()*3,0.7+Math.random()*0.6,2+Math.random()*3, grey);
+      else if (r < 0.855 && nn.d > 65) add('peak', x,y-1,z, 1.1+Math.random()*0.7,1.1+Math.random()*0.8,1.1+Math.random()*0.7, snowRock);
     } else if (biome==='desert'){
       if (r < 0.4) add('cactus', x,y-0.5,z, sc,sc,sc, shade());
       else if (r < 0.75) add('rock', x,y-0.3,z, sc*1.5,sc*0.9,sc*1.3, warm);
@@ -962,9 +1057,9 @@ window.addEventListener('keydown', e=>{
   if (k==='escape'){ closeHelp(); }
   // Q = less steering, A = more steering (hold for fine adjustment)
   const sensStep = e.repeat ? 0.02 : 0.05;
-  if (k==='q'){ steerSensitivity = Math.min(0.8, +(steerSensitivity + sensStep).toFixed(2)); }
-  if (k==='a'){ steerSensitivity = Math.max(0.4, +(steerSensitivity - sensStep).toFixed(2)); }
-  if (k==='q' || k==='a'){ refreshSensUI(); }
+  if (k==='a'){ steerSensitivity = Math.min(0.8, +(steerSensitivity + sensStep).toFixed(2)); }
+  if (k==='z'){ steerSensitivity = Math.max(0.4, +(steerSensitivity - sensStep).toFixed(2)); }
+  if (k==='a' || k==='z'){ refreshSensUI(); }
   if (['arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
 });
 window.addEventListener('keyup', e=>{
@@ -981,7 +1076,7 @@ function refreshSensUI(){
 refreshSensUI();
 
 // ---------- Physics ----------
-const MAX_SPEED = 150/3.6;   // 150 km/h
+const MAX_SPEED = 200/3.6;   // 200 km/h
 const ACCEL = 28;
 const BRAKE = 40;
 const FRICTION = 12;
@@ -1132,6 +1227,7 @@ function updateCamera(dt){
   const lookTarget = car.position.clone().add(fwd.clone().multiplyScalar(3));
   lookTarget.y = car.position.y + 5.0;
   camLook.lerp(lookTarget, 0.15);
+  camera.up.set(0,1,0);
   camera.lookAt(camLook);
 }
 
@@ -1207,11 +1303,6 @@ function drawMinimap(){
 function updateHUD(){
   document.getElementById('lap').textContent = 'LAP ' + Math.min(player.lap+1, TOTAL_LAPS) + '/' + TOTAL_LAPS;
   document.getElementById('time').textContent = 'TIME ' + raceTime.toFixed(3);
-  // position: by progress
-  const all = [player, ...aiCars];
-  const sorted = all.map(c=>({c, prog: c.progress + c.lap})).sort((a,b)=>b.prog-a.prog);
-  const pos = sorted.findIndex(o=>o.c===player)+1;
-  document.getElementById('pos').textContent = 'POS ' + pos + '/' + all.length;
   const zi = player.curIdx !== undefined ? player.curIdx % N : 0;
   document.getElementById('zone').textContent = BIOMES[sampleBiome[zi]].name + '  ALT ' + Math.round(player.mesh.position.y) + (bridgeOf[zi] >= 0 ? '  [BRIDGE]' : '') + (tunnelOf[zi] >= 0 ? '  [TUNNEL]' : '') + (deckOf[zi] ? '  [OVERPASS]' : '');
   const gearTag = player.drifting ? '  [DRIFT]' : (player.speed < -0.2 ? '  [REV]' : (gasOn ? '  [GAS]' : (brakeOn ? '  [BRAKE]' : '')));
