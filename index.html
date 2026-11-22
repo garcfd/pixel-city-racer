@@ -102,41 +102,97 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, INTERNAL_W/INTERNAL_H, 0.1, 2000);
 
 // ---------- Track generation ----------
-function generateTrack() {
-  // More control points create a noticeably more flowing circuit while the
-  // sin(2t) envelope keeps both figure-eight crossing points exactly aligned.
-  const n = 40;
-  const A = 230 + Math.random()*40, B = 270 + Math.random()*50;
-  const ph = [Math.random()*6.28, Math.random()*6.28, Math.random()*6.28];
+// A figure-eight base (one over/under crossing at the origin) overlaid with many mid-frequency bends.
+// The sin(2t) envelope keeps both crossing points at exactly (0,0) with the road running straight through.
+function makeCandidate(amp) {
+  const n = 96;
+  const A = 330 + Math.random()*50, B = 380 + Math.random()*60;
+  const H = [3,5,7,9,11,13], an = [38,32,26,18,11,6].map(v=>v*amp);   // bend harmonics, applied sideways to the road
+  const pn = H.map(()=>Math.random()*6.28), py = [0,1,2,3,4].map(()=>Math.random()*6.28);
+  const hy = [[2,4.5],[4,3.5],[6,3],[8,2.2],[10,1.6]];   // even harmonics only: identical at both crossing points
+  // x holds still near each tip of the figure-eight, which gives a long straight run there
+  const T1 = 0.22, K = (Math.PI/2)/(Math.PI/2 - T1);
+  const gs = a => a > Math.PI/2 ? Math.PI - gs(Math.PI - a) : (a < T1 ? 0 : K*(a-T1));
+  const baseXZ = t => { const u = t > Math.PI ? t - 2*Math.PI : t, ga = u < 0 ? -gs(-u) : gs(u); return [A*Math.cos(ga), B*Math.sin(t)*Math.cos(t)]; };
   const pts = [];
   for (let i=0;i<n;i++){
-    const t = (i/n)*Math.PI*2;
-    const crossing = (i===n/4 || i===3*n/4);
-    const bend = Math.sin(2*t);
-    // Broad, flowing deviations only: avoid high-frequency wiggles that create hairpins.
-    // A little more lobe-to-lobe variation, using broad curves that stay
-    // comfortable for the existing drift handling.
-    let x = A*Math.cos(t) + bend*(15*Math.sin(3*t+ph[0]) + 6*Math.sin(5*t+ph[1]));
-    let z = B*Math.sin(t)*Math.cos(t) + bend*(17*Math.cos(3*t+ph[1]) + 6.5*Math.sin(5*t+ph[2]));
-    if (!crossing){ x += (Math.random()-0.5)*3.5; z += (Math.random()-0.5)*3.5; }
-    // Keep the over/under height separation at the crossover.
-    const hump = 4.5*Math.sin(2*t+ph[0]) + 3*Math.sin(4*t+ph[1]) + 2.5*Math.sin(6*t+ph[2]);
-    const y = 20 + 9*Math.sin(t) + hump + (crossing ? 0 : (Math.random()-0.5)*1.5);
-    pts.push(new THREE.Vector3(x, y, z));
+    const t = (i/n)*Math.PI*2, u = t > Math.PI ? t - 2*Math.PI : t;
+    const tipD = Math.min(Math.abs(u), Math.PI - Math.abs(u));
+    const wgt = Math.max(0, Math.min(1, (tipD - T1 - 0.05)/0.35));        // no wiggles on the straights
+    const [bx,bz] = baseXZ(t), [x1,z1] = baseXZ(t+1e-3), [x0,z0] = baseXZ(t-1e-3);
+    const tl = Math.hypot(x1-x0, z1-z0) || 1, nx = -(z1-z0)/tl, nz = (x1-x0)/tl;
+    let off = 0; H.forEach((f,k)=>{ off += an[k]*Math.sin(f*t+pn[k]); });
+    off *= wgt*Math.sin(2*t);                                               // sin(2t): zero at the crossing, so both branches meet at (0,0)
+    let y = 26 + 11*Math.sin(t);                                            // the 11*sin(t) term puts one branch ~22 above the other at the crossing
+    hy.forEach(([f,a],k)=>{ y += a*Math.sin(f*t+py[k]); });
+    pts.push(new THREE.Vector3(bx+nx*off, Math.max(4,y), bz+nz*off));
   }
-  return new THREE.CatmullRomCurve3(pts, true, 'centripetal');
+  const cv = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
+  cv.arcLengthDivisions = 4000;   // default (200) is far too coarse for a track this long
+  return cv;
 }
-
+// the straightest, flattest stretch (clear of the crossing) becomes the start/finish straight
+function startInfo(curve){
+  const M = 720, L = curve.getLength(), step = L/M, P = [];
+  for (let i=0;i<M;i++) P.push(curve.getPointAt(i/M));
+  const hd = P.map((p,i)=>{ const q = P[(i+1)%M]; return Math.atan2(q.x-p.x, q.z-p.z); });
+  const dh = hd.map((h,i)=>{ const d = hd[(i+1)%M]-h; return Math.abs(Math.atan2(Math.sin(d),Math.cos(d))); });
+  const back = Math.round(20/step), fwd = Math.round(210/step);
+  let best = 0, bs = Infinity;
+  for (let i=0;i<M;i++){
+    let turn = 0, y0 = Infinity, y1 = -Infinity, ok = true;
+    for (let k=-back;k<=fwd;k++){ const j = (i+k+M)%M; turn += dh[j]; y0 = Math.min(y0,P[j].y); y1 = Math.max(y1,P[j].y); if (Math.hypot(P[j].x,P[j].z) < 170) ok = false; }
+    if (!ok) continue;
+    const sc = turn + (y1-y0)*0.01;
+    if (sc < bs){ bs = sc; best = i; }
+  }
+  return { u: best/M, score: bs };
+}
+// reject circuits with hairpins too tight to drive, roads that touch (apart from the one crossing),
+// or a crossing at too shallow an angle
+function trackOK(curve, relax){
+  const M = 900, L = curve.getLength(), P = [];
+  for (let i=0;i<M;i++) P.push(curve.getPointAt(i/M));
+  const near = Math.round(220/(L/M));
+  let io = 0;
+  for (let i=0;i<M;i++){
+    const a = P[(i+M-2)%M], b = P[i], c = P[(i+2)%M];
+    const ab = Math.hypot(b.x-a.x,b.z-a.z), bc = Math.hypot(c.x-b.x,c.z-b.z), ac = Math.hypot(c.x-a.x,c.z-a.z);
+    const cr = Math.abs((b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x));
+    if (cr > 1e-6 && ab*bc*ac/(2*cr) < (relax?34:44)) return false;
+    if (Math.hypot(b.x,b.z) < Math.hypot(P[io].x,P[io].z)) io = i;
+  }
+  for (let i=0;i<M;i++) for (let j=i+1;j<M;j++){
+    if (Math.min(j-i, M-(j-i)) < near) continue;
+    if (Math.hypot(P[i].x,P[i].z) < 85 && Math.hypot(P[j].x,P[j].z) < 85) continue;   // the crossing itself
+    if (Math.hypot(P[i].x-P[j].x, P[i].z-P[j].z) < (relax?46:52)) return false;
+  }
+  let jo = -1, bd = Infinity;
+  for (let j=0;j<M;j++){
+    const d = Math.abs(j-io); if (Math.min(d,M-d) < near) continue;
+    const r = Math.hypot(P[j].x,P[j].z); if (r < bd){ bd = r; jo = j; }
+  }
+  if (jo < 0 || bd > 6) return false;
+  if (startInfo(curve).score > (relax?0.4:0.25)) return false;   // must have a proper straight to start on
+  const t1 = P[(io+1)%M].clone().sub(P[(io+M-1)%M]), t2 = P[(jo+1)%M].clone().sub(P[(jo+M-1)%M]);
+  return Math.abs(t1.x*t2.z-t1.z*t2.x)/(Math.hypot(t1.x,t1.z)*Math.hypot(t2.x,t2.z)) > 0.6;
+}
+function generateTrack() {
+  for (let a=0;a<400;a++){ const c = makeCandidate(a<250 ? 1 : 0.6); if (trackOK(c, a>=150)) return c; }
+  return makeCandidate(0);   // plain figure-eight with straights: always valid
+}
 const track = generateTrack();
+const U0 = startInfo(track).u;
 const TRACK_HALF = 9; // half width
-const SAMPLES = 400;
+const SAMPLES = Math.max(400, Math.round(track.getLength()/4.4));
 const samples = [];
 let totalLen = 0;
 const ptsArr = [];
 for (let i=0;i<=SAMPLES;i++){
   const t = i/SAMPLES;
-  const p = track.getPointAt(t);
-  const tan = track.getTangentAt(t);
+  const u = (U0 + t) % 1;
+  const p = track.getPointAt(u);
+  const tan = track.getTangentAt(u);
   const side = new THREE.Vector3().crossVectors(tan, new THREE.Vector3(0,1,0)).normalize();
   samples.push({ t, p: p.clone(), tan: tan.clone(), side: side.clone() });
   ptsArr.push(p.clone());
@@ -215,13 +271,14 @@ samples.forEach(s=>{ TERR_EXT = Math.max(TERR_EXT, Math.abs(s.p.x), Math.abs(s.p
 TERR_EXT += 130;
 
 // ---------- Bridges (over rivers) and tunnels (through hills) ----------
-const BR = { wc:36, R0:110, R1:180 };   // river half-width, river half-length, fade-out radius
+const BR = { wc:30, R0:68, R1:120 };   // river half-width, river half-length, fade-out radius
 const TUN_H = 7.5, TL = 30;             // tunnel clearance height, tunnel length in samples
+const NB = 3, NT = 5;                 // how many bridges / tunnels to try to place
 const bridges = [], tunnels = [], FEATURES = [];
 const bridgeOf = new Int8Array(N).fill(-1), tunnelOf = new Int8Array(N).fill(-1), moundOf = new Int8Array(N).fill(-1);
 const occ = new Uint8Array(N);
 const cdist = (a,b)=>{ const d = Math.abs(a-b)%N; return Math.min(d, N-d); };
-for (let i=-30;i<=30;i++) occ[(i+N)%N] = 1;   // keep the start/finish clear
+for (let i=-30;i<=90;i++) occ[(i+N)%N] = 1;   // keep the start/finish clear
 // ---------- Figure-of-eight crossing: one branch passes over the other ----------
 const deckOf = new Uint8Array(N);
 const xing = { found:false, iu:0, il:0, kmin:0, kmax:0 };
@@ -256,18 +313,18 @@ function planBridge(i){
   }
   return { ic:i, cx:s.p.x, cz:s.p.z, tx, tz, j0, j1, worst, waterY:minY-4.5 };
 }
-for (let b=0;b<2;b++){          // bridges go where the road is straight and high enough to span a river
+for (let b=0;b<NB;b++){          // bridges go where the road is straight and high enough to span a river
   let best = null;
   for (let i=0;i<N;i++){
-    if (samples[i].p.y < 14 || bridges.some(o=>cdist(o.ic,i) < N/3)) continue;
+    if (samples[i].p.y < 14 || bridges.some(o=>cdist(o.ic,i) < N/(NB*2))) continue;
     let free = true;
-    for (let j=-44;j<=44 && free;j++) if (occ[(i+j+N)%N]) free = false;
+    for (let j=-30;j<=30 && free;j++) if (occ[(i+j+N)%N]) free = false;
     if (!free) continue;
     const c = planBridge(i);
     if (c.waterY < 2.2) continue;
     let clash = false;
     for (let j=0;j<N && !clash;j++){
-      if (cdist(j,i) <= 48) continue;
+      if (cdist(j,i) <= 36) continue;
       const rx = samples[j].p.x-c.cx, rz = samples[j].p.z-c.cz;
       if (Math.abs(rx*c.tx + rz*c.tz) < BR.wc+16 && Math.hypot(rx,rz) < BR.R0+14) clash = true;
     }
@@ -277,22 +334,22 @@ for (let b=0;b<2;b++){          // bridges go where the road is straight and hig
   if (!best) break;
   best.bed = best.waterY - Math.min(3.5, best.waterY-0.6);
   const bi = bridges.length; bridges.push(best);
-  for (let j=-44;j<=44;j++) occ[(best.ic+j+N)%N] = 1;
+  for (let j=-30;j<=30;j++) occ[(best.ic+j+N)%N] = 1;
   for (let j=best.j0;j<=best.j1;j++) bridgeOf[(best.ic+j+N)%N] = bi;
   FEATURES.push({ type:'bridge', from:best.ic+best.j0, to:best.ic+best.j1 });
 }
-for (let t=0;t<2;t++){          // tunnels at random free stretches
-  for (let k=0;k<400;k++){
+for (let t=0;t<NT;t++){          // tunnels at random free stretches
+  for (let k=0;k<900;k++){
     const i0 = Math.floor(Math.random()*N);
     let free = true;
     for (let j=-8;j<TL+8 && free;j++) if (occ[(i0+j+N)%N]) free = false;
-    if (!free || tunnels.some(o=>cdist(o.from,i0) < N/4)) continue;
+    if (!free || tunnels.some(o=>cdist(o.from,i0) < N/(NT*2))) continue;
     let clash = false;
     for (let k=0;k<TL && !clash;k+=3){
       const a = samples[(i0+k)%N].p;
       for (let j=0;j<N;j++){
         if (cdist(j,(i0+k)%N) <= TL+14) continue;
-        if (Math.hypot(samples[j].p.x-a.x, samples[j].p.z-a.z) < 62){ clash = true; break; }
+        if (Math.hypot(samples[j].p.x-a.x, samples[j].p.z-a.z) < 54){ clash = true; break; }
       }
     }
     if (clash) continue;
@@ -319,11 +376,12 @@ function inWater(x,z){
   return false;
 }
 
+const SXA = Float32Array.from(samples.slice(0,N), q=>q.p.x), SZA = Float32Array.from(samples.slice(0,N), q=>q.p.z);
 function nearestXZ(x,z,skipDeck){
   let bi = 0, bd = Infinity;
   for (let i=0;i<N;i++){
     if (skipDeck && deckOf[i]) continue;
-    const dx = x-samples[i].p.x, dz = z-samples[i].p.z;
+    const dx = x-SXA[i], dz = z-SZA[i];
     const d = dx*dx + dz*dz;
     if (d < bd){ bd = d; bi = i; }
   }
@@ -337,7 +395,7 @@ function hillNoise(x,z){
 // flat shoulder beside the road, then blends into the zone's hills (valleys, ridges, mountains)
 function terrainHeight(x,z,nn){
   nn = hasCross ? nearestXZ(x,z,true) : (nn || nearestXZ(x,z));
-  const roadY = elevationAt({x,z}, nn.i) - 0.5;
+  const roadY = elevationAt({x,z}, nn.i) - 0.9;
   const edge = 1 - smooth(TERR_EXT*0.7, TERR_EXT, Math.max(Math.abs(x), Math.abs(z)));
   const base = hillNoise(x,z) * sampleAmp[nn.i] * edge;
   const w = smooth(TRACK_HALF+5, TRACK_HALF+60, nn.d);
@@ -515,6 +573,9 @@ function buildFeatures(group){
     for (let j=-1;j<=TL;j++){ const s = samples[(t.from+j+N)%N];
       rings.push([edge(s,-W,-0.3), edge(s,-W,TUN_H), edge(s,W,TUN_H), edge(s,W,-0.3)]); }
     group.add(ringStrip(rings, tunnelMat));
+    const floorMat = new THREE.MeshLambertMaterial({ color:0x4a4c52, side:THREE.DoubleSide });   // ground between the road edge and the tunnel walls
+    const fl = []; for (let j=-1;j<=TL;j++) fl.push(samples[(t.from+j+N)%N]);
+    [-1,1].forEach(sd=>group.add(ringStrip(fl.map(q=>[edge(q,sd*(W+0.5),-0.06), edge(q,sd*(half-0.3),-0.06)]), floorMat)));
     const mk = (s,w,h,d,lat,y,mat)=>{                // yaw-aligned box at a sample
       const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
       m.position.copy(edge(s,lat,y)); m.rotation.y = Math.atan2(s.tan.x, s.tan.z); group.add(m);
@@ -538,16 +599,17 @@ function buildFeatures(group){
   });
 }
 
+let ROAD_R = 0; samples.forEach(q=>{ ROAD_R = Math.max(ROAD_R, Math.hypot(q.p.x,q.p.z)); });
 function buildAlpineLandmarks(group){
   // A distant ring of oversized snowy peaks gives the whole circuit an alpine skyline.
   const mountainRock = new THREE.MeshLambertMaterial({color:0x71899b, flatShading:true});
   const mountainSnow = new THREE.MeshLambertMaterial({color:0xf4f8fc, flatShading:true});
-  const peakCount = 18;
+  const peakCount = 26;
   for(let i=0;i<peakCount;i++){
     const a = (i/peakCount)*Math.PI*2 + (Math.random()-0.5)*0.12;
-    const radius = TERR_EXT + 45 + Math.random()*105;
-    const x = Math.cos(a)*radius, z = Math.sin(a)*radius;
     const h = 210 + Math.random()*150, r = 115 + Math.random()*100;
+    const radius = ROAD_R + 150 + r + Math.random()*60;   // inner edge of the base is always >150 m outside every road
+    const x = Math.cos(a)*radius, z = Math.sin(a)*radius;
     // Broad, flat-topped mountain ridges sit on the horizon without cloud-like blobs.
     const base = new THREE.Mesh(new THREE.CylinderGeometry(r*0.16,r,h,9,1), mountainRock);
     base.position.set(x,h*0.5-12,z);
@@ -564,31 +626,31 @@ function buildAlpineLandmarks(group){
   for(let tries=0;tries<900;tries++){
     const i = Math.floor(Math.random()*N), side = Math.random()<0.5?-1:1;
     if(sampleBiome[i] !== 'alpine') continue;
-    const s = samples[i], d = 85 + Math.random()*105;
+    const s = samples[i], d = 115 + Math.random()*110;
     const x = s.p.x+s.side.x*side*d, z = s.p.z+s.side.z*side*d;
     const nn = nearestXZ(x,z);
-    if(nn.d < 78 || Math.max(Math.abs(x),Math.abs(z)) > TERR_EXT-75 || inWater(x,z)) continue;
+    if(nn.d < 115 || Math.max(Math.abs(x),Math.abs(z)) > TERR_EXT-75 || inWater(x,z) || bridges.some(b=>Math.hypot(x-b.cx,z-b.cz) < 260)) continue;
     lakeSpot = {x,z,y:terrainHeight(x,z,nn)+0.9}; break;
   }
   if(lakeSpot){
     const lake = new THREE.Group();
     const ice = new THREE.Mesh(new THREE.CircleGeometry(1,56), new THREE.MeshPhongMaterial({color:0x55c8f2, emissive:0x245a78, shininess:110, transparent:true, opacity:0.98}));
-    ice.rotation.x=-Math.PI/2; ice.scale.set(112,72,1); lake.add(ice);
+    ice.rotation.x=-Math.PI/2; ice.scale.set(84,54,1); lake.add(ice);
     const sheen = new THREE.Mesh(new THREE.CircleGeometry(1,40), new THREE.MeshBasicMaterial({color:0xe4f8ff,transparent:true,opacity:0.25}));
-    sheen.rotation.x=-Math.PI/2; sheen.position.y=0.22; sheen.scale.set(72,43,1); lake.add(sheen);
+    sheen.rotation.x=-Math.PI/2; sheen.position.y=0.22; sheen.scale.set(54,33,1); lake.add(sheen);
     // Pale cracks and skating-like streaks across the ice.
     const crackMat = new THREE.MeshBasicMaterial({color:0xd8f5ff,transparent:true,opacity:0.72});
     for(let j=0;j<13;j++){
-      const len=18+Math.random()*45, crack=new THREE.Mesh(new THREE.BoxGeometry(len,0.16,0.35),crackMat);
-      crack.position.set((Math.random()-0.5)*75,0.24,(Math.random()-0.5)*42); crack.rotation.y=Math.random()*Math.PI; lake.add(crack);
+      const len=12+Math.random()*30, crack=new THREE.Mesh(new THREE.BoxGeometry(len,0.16,0.35),crackMat);
+      crack.position.set((Math.random()-0.5)*55,0.24,(Math.random()-0.5)*32); crack.rotation.y=Math.random()*Math.PI; lake.add(crack);
     }
     lake.position.set(lakeSpot.x,lakeSpot.y,lakeSpot.z); lake.rotation.y=Math.random()*Math.PI; group.add(lake);
     // Snowy banks around the ice.
     const bankMat=new THREE.MeshLambertMaterial({color:0xf1f6f8});
     for(let j=0;j<18;j++){
-      const a=j/18*Math.PI*2, rr=86+Math.random()*10;
+      const a=j/18*Math.PI*2, rr=66+Math.random()*8;
       const drift=new THREE.Mesh(new THREE.SphereGeometry(1,7,5),bankMat);
-      drift.scale.set(13+Math.random()*12,2.4,9+Math.random()*8);
+      drift.scale.set(9+Math.random()*8,2.4,7+Math.random()*5);
       drift.position.set(lakeSpot.x+Math.cos(a)*rr,lakeSpot.y+0.4,lakeSpot.z+Math.sin(a)*rr*0.63); group.add(drift);
     }
   }
@@ -604,7 +666,7 @@ function buildAlpineLandmarks(group){
     if(sampleBiome[i]!=='alpine' || Math.random()>0.38) continue;
     const s=samples[i], side=Math.random()<0.5?-1:1, dist=TRACK_HALF+23+Math.random()*38;
     const x=s.p.x+s.side.x*side*dist, z=s.p.z+s.side.z*side*dist, nn=nearestXZ(x,z);
-    if(nn.d<19 || inWater(x,z) || (tunnelOf[nn.i]>=0 && nn.d<35)) continue;
+    if(nn.d<32 || inWater(x,z) || (tunnelOf[nn.i]>=0 && nn.d<35)) continue;
     const y=terrainHeight(x,z,nn), g=new THREE.Group();
     const body=new THREE.Mesh(cabinGeo,wood); body.position.y=4; g.add(body);
     // Two sloping roof panels make a clear alpine A-frame silhouette.
@@ -629,15 +691,15 @@ function buildScenery(group){
   const shade = ()=>{ const v = 0.8 + Math.random()*0.3; return new THREE.Color(v,v,v); };
 
   // trees, cacti, rocks and mesas, scattered by zone
-  for (let k=0;k<7800;k++){
+  for (let k=0;k<12000;k++){
     const si = Math.floor(Math.random()*N);
     const s = samples[si];
     const side = Math.random()<0.5 ? -1 : 1;
-    const dist = TRACK_HALF + 4 + Math.pow(Math.random(),1.5)*110;
+    const dist = TRACK_HALF + 7 + Math.pow(Math.random(),1.5)*110;
     const x = s.p.x + s.side.x*side*dist, z = s.p.z + s.side.z*side*dist;
     if (Math.max(Math.abs(x),Math.abs(z)) > TERR_EXT-8) continue;
     const nn = nearestXZ(x,z);
-    if (nn.d < TRACK_HALF+4 || inWater(x,z) || (tunnelOf[nn.i] >= 0 && nn.d < 26)) continue;
+    if (nn.d < TRACK_HALF+7 || inWater(x,z) || (tunnelOf[nn.i] >= 0 && nn.d < 26)) continue;
     const biome = sampleBiome[nn.i];
     const y = terrainHeight(x,z,nn);
     const r = Math.random(), sc = 0.8 + Math.random()*0.7;
@@ -676,7 +738,7 @@ function buildScenery(group){
   // city zone: buildings + street lamps
   const buildingColors = [0x556677,0x775544,0x445566,0x666655,0x887766];
   for (let i=0;i<N;i+=2){
-    if (sampleBiome[i] !== 'city' || tunnelOf[i] >= 0) continue;
+    if (sampleBiome[i] !== 'city' || tunnelOf[i] >= 0 || deckOf[i]) continue;
     const s = samples[i];
     for (const sideSign of [-1,1]){
       if (Math.random() < 0.3) continue;
@@ -685,7 +747,7 @@ function buildScenery(group){
       const pos = s.p.clone().add(s.side.clone().multiplyScalar(sideSign*dist));
       let tooClose = false;
       for (let j=0;j<N;j++){
-        if (Math.hypot(pos.x-samples[j].p.x, pos.z-samples[j].p.z) < TRACK_HALF + Math.max(w,d)*0.5 + 2){ tooClose = true; break; }
+        if (Math.hypot(pos.x-samples[j].p.x, pos.z-samples[j].p.z) < TRACK_HALF + Math.hypot(w,d)*0.5 + 4){ tooClose = true; break; }
       }
       if (tooClose || inWater(pos.x,pos.z)) continue;
       const ty = terrainHeight(pos.x,pos.z);
@@ -696,7 +758,7 @@ function buildScenery(group){
     }
   }
   for (let i=0;i<N;i+=6){
-    if (sampleBiome[i] !== 'city' || tunnelOf[i] >= 0 || bridgeOf[i] >= 0) continue;
+    if (sampleBiome[i] !== 'city' || tunnelOf[i] >= 0 || bridgeOf[i] >= 0 || deckOf[i]) continue;
     const s = samples[i];
     for (const sideSign of [-1,1]){
       const pos = s.p.clone().add(s.side.clone().multiplyScalar(sideSign*(TRACK_HALF+2)));
@@ -724,7 +786,7 @@ function buildRoad() {
     const left = s.p.clone().add(s.side.clone().multiplyScalar(-half));
     const right = s.p.clone().add(s.side.clone().multiplyScalar(half));
     positions.push(left.x, s.p.y + 0.02, left.z, right.x, s.p.y + 0.02, right.z);
-    const v = i / samples.length * 20;
+    const v = cumDist[i] / 55;
     uvs.push(0, v, 1, v);
   }
   for (let i=0;i<samples.length-1;i++){
@@ -782,7 +844,7 @@ function buildRoad() {
     const s = samples[i];
     const l = s.p.clone().add(s.side.clone().multiplyScalar(-half));
     const r = s.p.clone().add(s.side.clone().multiplyScalar(half));
-    ePos.push(l.x, s.p.y, l.z, l.x, s.p.y-0.8, l.z, r.x, s.p.y, r.z, r.x, s.p.y-0.8, r.z);
+    ePos.push(l.x, s.p.y, l.z, l.x, s.p.y-1.6, l.z, r.x, s.p.y, r.z, r.x, s.p.y-1.6, r.z);
   }
   for (let i=0;i<samples.length-1;i++){
     const b = i*4, n = (i+1)*4;
@@ -1023,8 +1085,8 @@ snow.visible = false;
 function updateParticles(dt){
   const pp = player.mesh.position;
   rain.position.set(pp.x, pp.y-8, pp.z); snow.position.copy(rain.position);
-  rain.visible = (weather===1);
-  snow.visible = (weather===3);
+  rain.visible = (weather===1 && tunnelDark<0.5);
+  snow.visible = (weather===3 && tunnelDark<0.5);
   if (weather===1){
     const arr = rain.geometry.attributes.position.array;
     for (let i=0;i<rainCount;i++){
@@ -1082,6 +1144,7 @@ const BRAKE = 40;
 const FRICTION = 12;
 const TURN_SPEED = 0.9;
 const SLOPE_K = 45; // how strongly hills slow you down / speed you up
+const EDGE_START = 7.4, EDGE_HARD = 8.3;   // lateral distance (m) where the scrape penalty starts / where the car can go no further
 
 function updatePlayer(dt){
   if (player.finished) return;
@@ -1092,12 +1155,14 @@ function updatePlayer(dt){
   gasOn = up; brakeOn = down;
   // up/down linearly adjust the target speed; car approaches it linearly
   const SPEED_RATE = 28;
-  if (up) player.targetSpeed += SPEED_RATE*dt;
+  if (up && !(player.edge > 0.05 && player.speed > 8)) player.targetSpeed += SPEED_RATE*dt;   // no throttle build-up while scraping the edge
   if (down) player.targetSpeed -= SPEED_RATE*dt;
   player.targetSpeed = Math.max(-18, Math.min(MAX_SPEED, player.targetSpeed));
   const effTarget = player.targetSpeed - (player.grade||0)*SLOPE_K*Math.max(0, Math.min(1, player.targetSpeed/10));
-  if (player.speed < effTarget) player.speed = Math.min(effTarget, player.speed + ACCEL*dt);
-  else if (player.speed > effTarget) player.speed = Math.max(effTarget, player.speed - BRAKE*dt);
+  if (!(player.edge > 0.05 && player.speed > 8)){   // while scraping the edge only the edge penalty changes the speed
+    if (player.speed < effTarget) player.speed = Math.min(effTarget, player.speed + ACCEL*dt);
+    else if (player.speed > effTarget) player.speed = Math.max(effTarget, player.speed - BRAKE*dt);
+  }
   // weather grip
   let grip = 1;
   if (weather===1) grip=0.7;
@@ -1146,26 +1211,32 @@ function updatePlayer(dt){
   player.mesh.rotation.y = player.yaw;
   player.mesh.rotation.z = 0;
 
-  // off-road / collision with track
+  // track edges: a hard limit with a gradual scrape penalty (the car can never leave the road surface)
   const info = nearestSample(player.mesh.position, player.curIdx);
-  if (info.dist > TRACK_HALF){
-    // push toward track
-    const toCenter = new THREE.Vector3().subVectors(info.sample.p, player.mesh.position);
-    // only horizontal
-    toCenter.y=0;
-    const push = toCenter.normalize().multiplyScalar((info.dist-TRACK_HALF)*0.5);
-    player.mesh.position.add(push);
-    // no speed penalty on grass
-    // align the travel direction with the track (tangential correction)
-    const tan = info.sample.tan;
-    let targetYaw = Math.atan2(tan.x, tan.z);
-    if (player.speed < 0) targetYaw += Math.PI;
-    let diff = targetYaw - player.moveYaw;
-    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-    player.moveYaw += diff * Math.min(1, 8*dt);
-    player.yaw = player.moveYaw + player.slip;
-    player.steerAngle *= 0.6;
-    player.mesh.rotation.y = player.yaw;
+  {
+    const sd = info.sample.side, pp = player.mesh.position;
+    const lat = (pp.x-info.sample.p.x)*sd.x + (pp.z-info.sample.p.z)*sd.z, alat = Math.abs(lat);
+    player.edge = 0;
+    if (alat > EDGE_START){
+      const over = Math.min(1, (alat-EDGE_START)/(EDGE_HARD-EDGE_START));
+      player.edge = over;
+      if (alat > EDGE_HARD){ const c = (alat-EDGE_HARD)*Math.sign(lat); pp.x -= sd.x*c; pp.z -= sd.z*c; }
+      // gradual deceleration: a steady braking force (3 m/s2 on a light brush, up to 14 m/s2 pinned on the edge),
+      // never stopping the car completely; the throttle target follows the car down so it cannot just accelerate back
+      const FLOOR = 6, dec = (3 + 11*over)*dt;
+      if (player.speed > FLOOR) player.speed = Math.max(FLOOR, player.speed - dec);
+      else if (player.speed < -FLOOR) player.speed = Math.min(-FLOOR, player.speed + dec);
+      if (over > 0.05 && player.speed > 8) player.targetSpeed = Math.min(player.targetSpeed, player.speed);   // no acceleration while scraping (but always able to creep away)
+      // ease the travel direction back along the track
+      const tan = info.sample.tan;
+      let targetYaw = Math.atan2(tan.x, tan.z);
+      if (player.speed < 0) targetYaw += Math.PI;
+      let diff = targetYaw - player.moveYaw;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      player.moveYaw += diff * Math.min(1, 2.5*over*dt);
+      player.yaw = player.moveYaw + player.slip;
+      player.mesh.rotation.y = player.yaw;
+    }
   }
   // follow track elevation and pitch with the slope
   const elevInfo = nearestSample(player.mesh.position, player.curIdx);
@@ -1305,7 +1376,7 @@ function updateHUD(){
   document.getElementById('time').textContent = 'TIME ' + raceTime.toFixed(3);
   const zi = player.curIdx !== undefined ? player.curIdx % N : 0;
   document.getElementById('zone').textContent = BIOMES[sampleBiome[zi]].name + '  ALT ' + Math.round(player.mesh.position.y) + (bridgeOf[zi] >= 0 ? '  [BRIDGE]' : '') + (tunnelOf[zi] >= 0 ? '  [TUNNEL]' : '') + (deckOf[zi] ? '  [OVERPASS]' : '');
-  const gearTag = player.drifting ? '  [DRIFT]' : (player.speed < -0.2 ? '  [REV]' : (gasOn ? '  [GAS]' : (brakeOn ? '  [BRAKE]' : '')));
+  const gearTag = (player.edge > 0.05 ? '  [EDGE]' : '') + (player.drifting ? '  [DRIFT]' : (player.speed < -0.2 ? '  [REV]' : (gasOn ? '  [GAS]' : (brakeOn ? '  [BRAKE]' : ''))));
   document.getElementById('speed').textContent = 'SPEED ' + Math.round(Math.abs(player.speed)*3.6) + gearTag;
   const speedFill = document.getElementById('speedfill');
   const speedVal = document.getElementById('speedmin');
