@@ -59,7 +59,7 @@
   <div id="speedmin">0</div>
   <div id="senslabel">SENS</div>
   <div id="senstrack"><div id="sensfill"></div></div>
-  <div id="sens">0.60</div>
+  <div id="sens">0.40</div>
 </div>
 <!-- minimap -->
 <canvas id="minimap" width="150" height="150"></canvas>
@@ -77,13 +77,14 @@
     <span class="k">W</span> &mdash; cycle weather<br>
     <span class="k">R</span> &mdash; restart<br>
     <span class="k">ESC</span> &mdash; close this panel<br>
-    <br>Complete 3 laps to win.
+    <span class="k">1 - 9</span> &mdash; set lap count<br>
+    <br>Complete <span class="lapGoal">1 lap</span> to win.
     <button id="helpClose">CLOSE</button>
   </div>
 </div>
 <div id="overlay">
   <h1>PIXEL CITY RACER</h1>
-  <p>Arrow keys: LEFT/RIGHT steer, UP accel, DOWN brake.<br>SHIFT = drift, A/Z = steering sensitivity up/down, R = restart.<br>Complete 3 laps to win.</p>
+  <p>Arrow keys: LEFT/RIGHT steer, UP accel, DOWN brake.<br>SHIFT = drift, A/Z = steering sensitivity up/down, R = restart, 1-9 = laps.<br>Complete <span class="lapGoal">1 lap</span> to win.</p>
   <button id="startBtn">START</button>
 </div>
 <script type="module">
@@ -101,90 +102,68 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, INTERNAL_W/INTERNAL_H, 0.1, 2000);
 
-// ---------- Track generation ----------
-// A figure-eight base (one over/under crossing at the origin) overlaid with many mid-frequency bends.
-// The sin(2t) envelope keeps both crossing points at exactly (0,0) with the road running straight through.
-function makeCandidate(amp) {
-  const n = 96;
-  const A = 330 + Math.random()*50, B = 380 + Math.random()*60;
-  const H = [3,5,7,9,11,13], an = [38,32,26,18,11,6].map(v=>v*amp);   // bend harmonics, applied sideways to the road
-  const pn = H.map(()=>Math.random()*6.28), py = [0,1,2,3,4].map(()=>Math.random()*6.28);
-  const hy = [[2,4.5],[4,3.5],[6,3],[8,2.2],[10,1.6]];   // even harmonics only: identical at both crossing points
-  // x holds still near each tip of the figure-eight, which gives a long straight run there
-  const T1 = 0.22, K = (Math.PI/2)/(Math.PI/2 - T1);
-  const gs = a => a > Math.PI/2 ? Math.PI - gs(Math.PI - a) : (a < T1 ? 0 : K*(a-T1));
-  const baseXZ = t => { const u = t > Math.PI ? t - 2*Math.PI : t, ga = u < 0 ? -gs(-u) : gs(u); return [A*Math.cos(ga), B*Math.sin(t)*Math.cos(t)]; };
-  const pts = [];
-  for (let i=0;i<n;i++){
-    const t = (i/n)*Math.PI*2, u = t > Math.PI ? t - 2*Math.PI : t;
-    const tipD = Math.min(Math.abs(u), Math.PI - Math.abs(u));
-    const wgt = Math.max(0, Math.min(1, (tipD - T1 - 0.05)/0.35));        // no wiggles on the straights
-    const [bx,bz] = baseXZ(t), [x1,z1] = baseXZ(t+1e-3), [x0,z0] = baseXZ(t-1e-3);
-    const tl = Math.hypot(x1-x0, z1-z0) || 1, nx = -(z1-z0)/tl, nz = (x1-x0)/tl;
-    let off = 0; H.forEach((f,k)=>{ off += an[k]*Math.sin(f*t+pn[k]); });
-    off *= wgt*Math.sin(2*t);                                               // sin(2t): zero at the crossing, so both branches meet at (0,0)
-    let y = 26 + 11*Math.sin(t);                                            // the 11*sin(t) term puts one branch ~22 above the other at the crossing
-    hy.forEach(([f,a],k)=>{ y += a*Math.sin(f*t+py[k]); });
-    pts.push(new THREE.Vector3(bx+nx*off, Math.max(4,y), bz+nz*off));
-  }
-  const cv = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
-  cv.arcLengthDivisions = 4000;   // default (200) is far too coarse for a track this long
-  return cv;
-}
-// the straightest, flattest stretch (clear of the crossing) becomes the start/finish straight
-function startInfo(curve){
-  const M = 720, L = curve.getLength(), step = L/M, P = [];
-  for (let i=0;i<M;i++) P.push(curve.getPointAt(i/M));
-  const hd = P.map((p,i)=>{ const q = P[(i+1)%M]; return Math.atan2(q.x-p.x, q.z-p.z); });
-  const dh = hd.map((h,i)=>{ const d = hd[(i+1)%M]-h; return Math.abs(Math.atan2(Math.sin(d),Math.cos(d))); });
-  const back = Math.round(20/step), fwd = Math.round(210/step);
-  let best = 0, bs = Infinity;
-  for (let i=0;i<M;i++){
-    let turn = 0, y0 = Infinity, y1 = -Infinity, ok = true;
-    for (let k=-back;k<=fwd;k++){ const j = (i+k+M)%M; turn += dh[j]; y0 = Math.min(y0,P[j].y); y1 = Math.max(y1,P[j].y); if (Math.hypot(P[j].x,P[j].z) < 170) ok = false; }
-    if (!ok) continue;
-    const sc = turn + (y1-y0)*0.01;
-    if (sc < bs){ bs = sc; best = i; }
-  }
-  return { u: best/M, score: bs };
-}
-// reject circuits with hairpins too tight to drive, roads that touch (apart from the one crossing),
-// or a crossing at too shallow an angle
-function trackOK(curve, relax){
-  const M = 900, L = curve.getLength(), P = [];
-  for (let i=0;i<M;i++) P.push(curve.getPointAt(i/M));
-  const near = Math.round(220/(L/M));
-  let io = 0;
-  for (let i=0;i<M;i++){
-    const a = P[(i+M-2)%M], b = P[i], c = P[(i+2)%M];
-    const ab = Math.hypot(b.x-a.x,b.z-a.z), bc = Math.hypot(c.x-b.x,c.z-b.z), ac = Math.hypot(c.x-a.x,c.z-a.z);
-    const cr = Math.abs((b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x));
-    if (cr > 1e-6 && ab*bc*ac/(2*cr) < (relax?34:44)) return false;
-    if (Math.hypot(b.x,b.z) < Math.hypot(P[io].x,P[io].z)) io = i;
-  }
-  for (let i=0;i<M;i++) for (let j=i+1;j<M;j++){
-    if (Math.min(j-i, M-(j-i)) < near) continue;
-    if (Math.hypot(P[i].x,P[i].z) < 85 && Math.hypot(P[j].x,P[j].z) < 85) continue;   // the crossing itself
-    if (Math.hypot(P[i].x-P[j].x, P[i].z-P[j].z) < (relax?46:52)) return false;
-  }
-  let jo = -1, bd = Infinity;
-  for (let j=0;j<M;j++){
-    const d = Math.abs(j-io); if (Math.min(d,M-d) < near) continue;
-    const r = Math.hypot(P[j].x,P[j].z); if (r < bd){ bd = r; jo = j; }
-  }
-  if (jo < 0 || bd > 6) return false;
-  if (startInfo(curve).score > (relax?0.4:0.25)) return false;   // must have a proper straight to start on
-  const t1 = P[(io+1)%M].clone().sub(P[(io+M-1)%M]), t2 = P[(jo+1)%M].clone().sub(P[(jo+M-1)%M]);
-  return Math.abs(t1.x*t2.z-t1.z*t2.x)/(Math.hypot(t1.x,t1.z)*Math.hypot(t2.x,t2.z)) > 0.6;
-}
-function generateTrack() {
-  for (let a=0;a<400;a++){ const c = makeCandidate(a<250 ? 1 : 0.6); if (trackOK(c, a>=150)) return c; }
-  return makeCandidate(0);   // plain figure-eight with straights: always valid
-}
-const track = generateTrack();
-const U0 = startInfo(track).u;
+// ---------- Fixed circuit from the supplied image ----------
+// One continuous closed line; the seven shared points become bridge-over-road crossings.
+const CIRCUIT_POINTS = [
+  [-262.21,454.90], [-266.86,435.62], [-271.91,411.38], [-276.88,384.90], [-281.63,357.98], [-287.24,331.43],
+  [-295.83,306.24], [-309.14,283.50], [-327.29,264.16], [-349.15,249.04], [-373.52,238.39], [-399.30,230.91],
+  [-425.42,224.22], [-450.73,216.51], [-473.33,207.81], [-490.76,199.65], [-503.34,192.77], [-525.97,182.85],
+  [-549.04,171.91], [-572.45,159.72], [-595.64,146.21], [-617.76,130.68], [-637.90,112.41], [-655.40,91.54],
+  [-669.90,68.78], [-681.23,44.58], [-689.42,19.11], [-694.61,-7.26], [-695.85,-33.63], [-690.95,-58.60],
+  [-678.56,-80.76], [-659.96,-99.28], [-637.82,-114.28], [-614.10,-126.68], [-589.72,-137.57], [-564.94,-147.47],
+  [-539.86,-156.38], [-515.16,-164.45], [-491.92,-171.96], [-470.24,-179.14], [-454.54,-183.08], [-434.28,-187.16],
+  [-409.51,-191.52], [-382.92,-196.30], [-356.31,-201.78], [-330.17,-208.42], [-304.64,-216.52], [-280.02,-226.55],
+  [-257.48,-239.68], [-238.83,-257.14], [-225.04,-278.82], [-215.20,-303.27], [-207.62,-328.98], [-201.58,-355.32],
+  [-197.32,-382.16], [-194.93,-409.20], [-193.74,-436.16], [-193.68,-466.46], [-193.23,-496.03], [-191.45,-524.46],
+  [-186.66,-551.21], [-176.76,-574.86], [-160.53,-593.48], [-138.77,-606.31], [-113.77,-614.76], [-87.53,-621.07],
+  [-60.83,-626.28], [-33.64,-629.81], [-6.10,-630.52], [21.03,-627.52], [46.78,-620.16], [70.56,-608.23],
+  [91.93,-592.13], [110.16,-572.58], [124.12,-550.10], [133.25,-525.15], [138.39,-498.70], [141.43,-473.14],
+  [144.08,-451.55], [147.01,-434.21], [151.21,-412.33], [156.94,-388.98], [165.10,-364.52], [175.71,-340.28],
+  [188.72,-317.62], [204.91,-298.41], [225.24,-284.37], [249.26,-275.17], [275.21,-268.64], [301.67,-262.82],
+  [328.14,-256.97], [354.56,-251.00], [380.62,-245.04], [404.72,-239.56], [424.22,-235.15], [439.08,-231.71],
+  [462.64,-225.44], [487.16,-218.85], [512.57,-211.76], [538.18,-204.04], [563.42,-195.23], [587.85,-184.52],
+  [611.03,-171.06], [632.48,-154.47], [651.71,-135.03], [668.15,-113.36], [681.16,-89.91], [690.44,-64.86],
+  [696.03,-38.38], [697.94,-10.99], [695.65,16.19], [688.22,41.78], [675.04,64.56], [656.75,83.74],
+  [634.96,99.16], [611.24,111.45], [586.52,121.52], [561.15,130.00], [535.21,137.13], [508.75,142.99],
+  [481.91,147.96], [455.22,152.73], [429.93,157.72], [407.71,162.71], [388.46,167.45], [369.32,172.61],
+  [347.65,179.00], [323.67,187.17], [299.15,197.20], [275.38,209.51], [252.90,224.71], [231.72,242.69],
+  [211.40,262.43], [191.50,282.91], [171.98,303.70], [152.87,324.67], [133.74,345.44], [113.86,365.17],
+  [92.69,382.80], [70.18,397.91], [46.87,411.33], [23.29,424.16], [-0.58,436.27], [-25.35,446.22],
+  [-51.52,452.79], [-79.04,456.08], [-107.43,457.30], [-136.11,457.82], [-164.64,458.70], [-192.48,460.56],
+  [-218.27,463.33], [-240.05,466.38], [-258.00,469.26], [-279.49,473.16], [-303.30,477.02], [-329.52,480.71],
+  [-356.92,483.90], [-384.80,486.28], [-412.94,487.44], [-440.90,486.58], [-467.84,482.29], [-493.01,473.38],
+  [-516.29,459.92], [-537.70,442.90], [-556.17,423.00], [-569.18,400.43], [-574.63,375.68], [-572.95,349.90],
+  [-566.52,324.21], [-557.48,299.11], [-546.83,274.63], [-535.17,250.82], [-523.50,228.48], [-512.87,209.14],
+  [-503.34,192.77], [-493.47,175.44], [-482.54,155.56], [-470.51,133.15], [-458.41,109.48], [-447.80,84.98],
+  [-440.11,59.30], [-435.90,32.33], [-434.78,4.51], [-435.99,-23.46], [-439.00,-51.05], [-443.56,-78.06],
+  [-449.33,-104.50], [-455.92,-130.28], [-462.99,-155.12], [-470.24,-179.14], [-482.70,-204.74], [-496.03,-229.23],
+  [-509.95,-252.73], [-523.44,-276.08], [-535.84,-299.84], [-546.83,-324.18], [-555.91,-349.28], [-561.99,-375.34],
+  [-563.59,-401.96], [-559.11,-427.64], [-547.46,-450.10], [-528.97,-467.16], [-505.36,-477.78], [-478.70,-482.71],
+  [-450.78,-483.70], [-422.86,-482.02], [-395.55,-478.27], [-368.91,-472.83], [-342.88,-465.94], [-317.26,-458.03],
+  [-291.67,-450.06], [-265.76,-443.32], [-240.01,-438.88], [-215.87,-436.82], [-193.74,-436.16], [-174.16,-436.16],
+  [-150.85,-436.16], [-123.82,-436.16], [-95.21,-436.13], [-66.40,-435.95], [-37.70,-435.49], [-9.06,-434.88],
+  [19.65,-434.42], [48.46,-434.24], [77.08,-434.21], [104.10,-434.21], [127.42,-434.21], [147.01,-434.21],
+  [168.14,-437.26], [190.44,-443.75], [213.30,-455.17], [235.54,-470.77], [256.95,-488.82], [278.07,-507.57],
+  [299.64,-525.25], [322.26,-540.38], [346.20,-552.34], [371.43,-561.09], [397.83,-566.36], [424.76,-567.19],
+  [450.74,-562.38], [473.70,-551.13], [491.58,-533.59], [502.83,-511.00], [507.13,-485.33], [505.48,-458.73],
+  [499.62,-432.58], [491.52,-407.07], [482.95,-381.73], [475.08,-356.10], [468.06,-330.11], [461.35,-304.08],
+  [454.32,-278.66], [446.82,-254.57], [439.08,-231.71], [430.67,-204.27], [422.08,-177.72], [413.30,-152.06],
+  [404.58,-126.73], [396.58,-101.15], [389.97,-75.00], [384.69,-48.30], [380.24,-21.25], [376.63,6.12],
+  [374.47,33.95], [374.15,62.11], [375.52,90.14], [378.47,117.34], [382.94,143.05], [388.46,167.45],
+  [404.06,191.31], [419.87,214.51], [434.14,237.78], [444.38,262.44], [449.68,288.94], [450.86,316.55],
+  [448.82,344.14], [443.21,370.65], [432.94,395.20], [417.66,417.15], [398.37,436.01], [376.53,451.74],
+  [353.39,465.33], [330.08,478.76], [307.44,493.85], [285.68,511.07], [264.35,529.30], [242.77,546.98],
+  [220.69,563.41], [198.24,578.95], [175.51,593.81], [152.12,607.11], [127.57,617.58], [101.67,624.80],
+  [74.63,629.22], [46.82,631.33], [18.69,631.39], [-9.29,629.67], [-36.88,626.60], [-64.11,622.59],
+  [-90.99,617.73], [-117.38,611.69], [-143.03,603.91], [-167.47,593.65], [-189.77,579.95], [-208.84,562.21],
+  [-224.33,540.98], [-236.96,517.68], [-247.86,493.56], [-258.00,469.26]
+];
+const track = new THREE.CatmullRomCurve3(
+  CIRCUIT_POINTS.map(([x,z]) => new THREE.Vector3(x, 0, z)), true, 'centripetal');
+track.arcLengthDivisions = 6000;
+const U0 = 0.9016;  // southeast straight, clear of the crossings
 const TRACK_HALF = 9; // half width
-const SAMPLES = Math.max(400, Math.round(track.getLength()/4.4));
+const SAMPLES = Math.min(1200, Math.max(400, Math.round(track.getLength()/8)));
 const samples = [];
 let totalLen = 0;
 const ptsArr = [];
@@ -207,16 +186,76 @@ totalLen = cumDist[cumDist.length-1];
 function nearestSample(pos, hint){
   let best=0, bestD=Infinity;
   const M = samples.length-1;
+  // Height breaks ties at bridges: the upper and lower road share the same x/z.
+  const measure = i => {
+    const dx = pos.x-samples[i].p.x, dz = pos.z-samples[i].p.z, dy = pos.y-samples[i].p.y;
+    return dx*dx + dz*dz + dy*dy;
+  };
   if (hint === undefined){
-    for (let i=0;i<M;i++){ const d = Math.hypot(pos.x-samples[i].p.x, pos.z-samples[i].p.z); if (d < bestD){ bestD=d; best=i; } }
+    for (let i=0;i<M;i++){ const d = measure(i); if (d < bestD){ bestD=d; best=i; } }
   } else {                                   // only look near where the car was last frame
-    for (let k=-16;k<=16;k++){ const i = ((hint+k)%M+M)%M; const d = Math.hypot(pos.x-samples[i].p.x, pos.z-samples[i].p.z); if (d < bestD){ bestD=d; best=i; } }
+    for (let k=-16;k<=16;k++){ const i = ((hint+k)%M+M)%M; const d = measure(i); if (d < bestD){ bestD=d; best=i; } }
   }
-  return { index: best, dist: bestD, sample: samples[best] };
+  return { index: best, dist: Math.sqrt(bestD), sample: samples[best] };
 }
 
 // ---------- Scenery zones (biomes) ----------
 const N = SAMPLES; // unique samples (the last one duplicates the first)
+
+// ---------- Grade-separated crossings: every overlap is a bridge ----------
+const CROSS_H = 14;   // upper road height above the lower road
+const CROSS_R = 11;   // ramp length in samples on each side of a crossing
+const crossings = [];
+const deckOf = new Uint8Array(N);
+const hasCross = true;
+{
+  const cp = CIRCUIT_POINTS, M = cp.length, centres = [];
+  for (let i=0;i<M;i++) for (let j=i+1;j<M;j++){
+    if (Math.min(j-i, M-(j-i)) < 5) continue;
+    if (Math.hypot(cp[i][0]-cp[j][0], cp[i][1]-cp[j][1]) < 0.01) centres.push({ x:cp[i][0], z:cp[i][1] });
+  }
+  for (const c of centres){
+    const near = [];
+    for (let i=0;i<N;i++){
+      const dx = samples[i].p.x-c.x, dz = samples[i].p.z-c.z;
+      if (dx*dx+dz*dz < 12*12) near.push(i);
+    }
+    if (near.length < 4) continue;
+    // The two visits to a shared point are far apart along the sampled circuit.
+    // Split on the largest circular gap in sample indices, then keep contiguous runs.
+    near.sort((a,b)=>a-b);
+    let cut=0, maxGap=-1;
+    for (let k=0;k<near.length;k++){
+      const gap = (near[(k+1)%near.length]-near[k]+N)%N;
+      if (gap > maxGap){ maxGap=gap; cut=k; }
+    }
+    const ordered = [];
+    for (let k=1;k<=near.length;k++) ordered.push(near[(cut+k)%near.length]);
+    const groups = [[ordered[0]]];
+    for (let k=1;k<ordered.length;k++){
+      const step = (ordered[k]-ordered[k-1]+N)%N;
+      if (step > 18) groups.push([]);
+      groups[groups.length-1].push(ordered[k]);
+    }
+    if (groups.length < 2 || !groups[0].length || !groups[1].length) continue;
+    const pick = g => g.reduce((best,i)=>{
+      const d0 = (samples[i].p.x-c.x)**2 + (samples[i].p.z-c.z)**2;
+      const d1 = (samples[best].p.x-c.x)**2 + (samples[best].p.z-c.z)**2;
+      return d0 < d1 ? i : best;
+    }, g[0]);
+    const a = pick(groups[0]), b = pick(groups[1]);
+    const upper = (crossings.length % 2 === 0) ? a : b;
+    const lower = upper === a ? b : a;
+    crossings.push({ iu:upper, il:lower, kmin:-CROSS_R, kmax:CROSS_R, cx:c.x, cz:c.z });
+    for (let k=-CROSS_R;k<=CROSS_R;k++){
+      const i = (upper+k+N)%N;
+      const f = 0.5 + 0.5*Math.cos(Math.PI*k/(CROSS_R+1));
+      samples[i].p.y += CROSS_H*f;
+      deckOf[i] = 1;
+    }
+  }
+  samples[N].p.y = samples[0].p.y;
+}
 const BIOMES = {
   city:   { name:'CITY',   ground:0x6c7570, sky:0x87ceeb, amp:8  },
   forest: { name:'FOREST', ground:0x2f6a2c, sky:0x8ad0e6, amp:30 },
@@ -279,29 +318,12 @@ const bridgeOf = new Int8Array(N).fill(-1), tunnelOf = new Int8Array(N).fill(-1)
 const occ = new Uint8Array(N);
 const cdist = (a,b)=>{ const d = Math.abs(a-b)%N; return Math.min(d, N-d); };
 for (let i=-30;i<=90;i++) occ[(i+N)%N] = 1;   // keep the start/finish clear
-// ---------- Figure-of-eight crossing: one branch passes over the other ----------
-const deckOf = new Uint8Array(N);
-const xing = { found:false, iu:0, il:0, kmin:0, kmax:0 };
-{
-  let best = Infinity, bi = 0, bj = 0;
-  for (let i=0;i<N;i++) for (let j=i+1;j<N;j++){
-    if (cdist(i,j) < N/4) continue;
-    const d = Math.hypot(samples[i].p.x-samples[j].p.x, samples[i].p.z-samples[j].p.z);
-    if (d < best){ best = d; bi = i; bj = j; }
-  }
-  if (best < TRACK_HALF*2){
-    xing.found = true;
-    xing.iu = samples[bi].p.y > samples[bj].p.y ? bi : bj;
-    xing.il = xing.iu === bi ? bj : bi;
-    const cx = (samples[bi].p.x+samples[bj].p.x)/2, cz = (samples[bi].p.z+samples[bj].p.z)/2;
-    const far = k => { const q = samples[(xing.iu+k+N)%N].p; return Math.hypot(q.x-cx,q.z-cz) > 62; };
-    while (!far(xing.kmin-1) && xing.kmin > -45) xing.kmin--;
-    while (!far(xing.kmax+1) && xing.kmax < 45) xing.kmax++;
-    for (let k=xing.kmin;k<=xing.kmax;k++) deckOf[(xing.iu+k+N)%N] = 1;
-    for (let k=-40;k<=40;k++){ occ[(xing.iu+k+N)%N] = 1; occ[(xing.il+k+N)%N] = 1; }
+for (const x of crossings){                    // keep bridge zones free of rivers/tunnels
+  for (let k=-40;k<=40;k++){
+    occ[(x.iu+k+N)%N] = 1;
+    occ[(x.il+k+N)%N] = 1;
   }
 }
-const hasCross = xing.found;
 function planBridge(i){
   const s = samples[i], tl = Math.hypot(s.tan.x, s.tan.z);
   const tx = s.tan.x/tl, tz = s.tan.z/tl;
@@ -549,8 +571,8 @@ function buildFeatures(group){
     }
   });
 
-  if (hasCross){
-    const S = []; for (let k=xing.kmin;k<=xing.kmax;k++) S.push(samples[(xing.iu+k+N)%N]);
+  for (const x of crossings){
+    const S = []; for (let k=x.kmin;k<=x.kmax;k++) S.push(samples[(x.iu+k+N)%N]);
     group.add(ringStrip(S.map(s=>[edge(s,-half,0), edge(s,-half,-2.4), edge(s,half,-2.4), edge(s,half,0)]), concrete));
     [-1,1].forEach(sd=>group.add(ringStrip(S.map(s=>[edge(s,sd*(half+0.25),0), edge(s,sd*(half+0.25),1.1)]), railMat)));
     for (let k=1;k<S.length-1;k+=3){
@@ -977,15 +999,23 @@ function makeCar(color) {
 const playerCar = makeCar(0xff3333);
 scene.add(playerCar);
 const aiCars = [];
-const aiColors = [0x3366ff, 0xffcc00, 0x33cc66, 0xcc33cc];
-for (let i=0;i<0;i++){
+const aiColors = [0x3366ff, 0xffcc00, 0x33cc66, 0xcc33cc, 0xff6600, 0x00ccff, 0xeeeeee, 0xff3399, 0x99cc00, 0x8844ff];
+for (let i=0;i<aiColors.length;i++){
   const c = makeCar(aiColors[i]);
   scene.add(c);
-  aiCars.push({ mesh: c, progress: 0.05 + i*0.06, speed: 18 + Math.random()*6, offset: (i%2===0? -4 : 4) + (Math.random()-0.5)*2 });
+  const baseSpeed = 30 + (i%5)*1.6 + Math.random()*3;
+  aiCars.push({
+    mesh: c,
+    progress: 0.04 + i*0.094,
+    speed: baseSpeed,
+    baseSpeed,
+    phase: Math.random()*Math.PI*2,
+    offset: (i%2===0 ? -4 : 4) + (Math.random()-0.5)*2
+  });
 }
 
 // player state
-const player = { mesh: playerCar, progress: 0.02, speed: 0, targetSpeed: 0, yaw: 0, moveYaw: 0, slip: 0, driftAmount: 0, steerAngle: 0, lap: 0, prevProgress: 0.02, finished:false, finishTime:0 };
+const player = { mesh: playerCar, progress: 0.005, speed: 0, targetSpeed: 0, yaw: 0, moveYaw: 0, slip: 0, driftAmount: 0, steerAngle: 0, lap: 0, prevProgress: 0.005, finished:false, finishTime:0, edge:0, onWhiteLine:false };
 
 // place player at start
 function placeAtProgress(carObj, prog, lateral){
@@ -1002,7 +1032,7 @@ function placeAtProgress(carObj, prog, lateral){
   carObj.mesh.rotation.y = carObj.yaw;
 }
 
-placeAtProgress(player, 0.02, 0);
+placeAtProgress(player, 0.005, 0);
 aiCars.forEach((a,i)=> placeAtProgress(a, a.progress, a.offset));
 
 // ---------- Lighting ----------
@@ -1110,17 +1140,18 @@ function updateParticles(dt){
 // ---------- Input ----------
 const keys = {};
 let gasOn = false, brakeOn = false;
-let steerSensitivity = 0.6;
+let steerSensitivity = 0.4;
 window.addEventListener('keydown', e=>{
   const k = e.key.toLowerCase();
   keys[k]=true;
   if (k==='w'){ weather = (weather+1)%4; applyEnvironment(); }
   if (k==='r'){ restart(); }
+  if (/^[1-9]$/.test(k)){ totalLaps = Number(k); refreshLapUI(); }
   if (k==='escape'){ closeHelp(); }
   // Q = less steering, A = more steering (hold for fine adjustment)
   const sensStep = e.repeat ? 0.02 : 0.05;
-  if (k==='a'){ steerSensitivity = Math.min(0.8, +(steerSensitivity + sensStep).toFixed(2)); }
-  if (k==='z'){ steerSensitivity = Math.max(0.4, +(steerSensitivity - sensStep).toFixed(2)); }
+  if (k==='a'){ steerSensitivity = Math.min(0.6, +(steerSensitivity + sensStep).toFixed(2)); }
+  if (k==='z'){ steerSensitivity = Math.max(0.2, +(steerSensitivity - sensStep).toFixed(2)); }
   if (k==='a' || k==='z'){ refreshSensUI(); }
   if (['arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
 });
@@ -1128,12 +1159,12 @@ window.addEventListener('keyup', e=>{
   keys[e.key.toLowerCase()]=false;
 });
 
-// sensitivity bar + value (0.40 - 0.80)
+// sensitivity bar + value (0.20 - 0.60)
 function refreshSensUI(){
   const v = document.getElementById('sens');
   if (v) v.textContent = steerSensitivity.toFixed(2);
   const f = document.getElementById('sensfill');
-  if (f) f.style.height = Math.max(0, Math.min(100, (steerSensitivity - 0.4) / 0.4 * 100)) + '%';
+  if (f) f.style.height = Math.max(0, Math.min(100, (steerSensitivity - 0.2) / 0.4 * 100)) + '%';
 }
 refreshSensUI();
 
@@ -1144,10 +1175,18 @@ const BRAKE = 40;
 const FRICTION = 12;
 const TURN_SPEED = 0.9;
 const SLOPE_K = 45; // how strongly hills slow you down / speed you up
-const EDGE_START = 7.4, EDGE_HARD = 8.3;   // lateral distance (m) where the scrape penalty starts / where the car can go no further
+// White side stripes sit 2-4 texture pixels in from each road edge.  Touching
+// them is only a visual cue (small camera judder); the real penalty starts when
+// the car body actually reaches the road edge.
+const WHITE_LINE_INNER = TRACK_HALF * (1 - 2*(4/64));   // 7.875 m from centre
+const WHITE_LINE_OUTER = TRACK_HALF * (1 - 2*(2/64));   // 8.4375 m from centre
+const CAR_HALF_WIDTH = 1.26;                            // wheel outer edge
+const CAR_HALF_LENGTH = 2.3;                            // nose / spoiler
+const EDGE_HYSTERESIS = 0.04;                           // keeps contact state stable at the clamp
 
 function updatePlayer(dt){
   if (player.finished) return;
+  if (player.lap >= totalLaps){ player.finished=true; player.finishTime=raceTime; return; }
   const up = keys['arrowup'];
   const down = keys['arrowdown'];
   const left = keys['arrowleft'];
@@ -1207,26 +1246,39 @@ function updatePlayer(dt){
   // move along the momentum direction, not the nose
   const fwd = new THREE.Vector3(Math.sin(player.moveYaw), 0, Math.cos(player.moveYaw));
   player.mesh.position.add(fwd.multiplyScalar(player.speed*dt));
-  player.mesh.position.y = 0;
   player.mesh.rotation.y = player.yaw;
   player.mesh.rotation.z = 0;
 
-  // track edges: a hard limit with a gradual scrape penalty (the car can never leave the road surface)
+  // track edges: the penalty starts only when the angled car body reaches the
+  // asphalt boundary; touching the white stripe is visual-only (camera judder).
   const info = nearestSample(player.mesh.position, player.curIdx);
   {
     const sd = info.sample.side, pp = player.mesh.position;
     const lat = (pp.x-info.sample.p.x)*sd.x + (pp.z-info.sample.p.z)*sd.z, alat = Math.abs(lat);
-    player.edge = 0;
-    if (alat > EDGE_START){
-      const over = Math.min(1, (alat-EDGE_START)/(EDGE_HARD-EDGE_START));
-      player.edge = over;
-      if (alat > EDGE_HARD){ const c = (alat-EDGE_HARD)*Math.sign(lat); pp.x -= sd.x*c; pp.z -= sd.z*c; }
-      // gradual deceleration: a steady braking force (3 m/s2 on a light brush, up to 14 m/s2 pinned on the edge),
-      // never stopping the car completely; the throttle target follows the car down so it cannot just accelerate back
+
+    // lateral reach of the rotated body, so the clamp always keeps it on the road
+    const trackYaw = Math.atan2(info.sample.tan.x, info.sample.tan.z);
+    let yawDiff = player.yaw - trackYaw;
+    yawDiff = Math.atan2(Math.sin(yawDiff), Math.cos(yawDiff));
+    const lateralReach = CAR_HALF_WIDTH*Math.abs(Math.cos(yawDiff)) + CAR_HALF_LENGTH*Math.abs(Math.sin(yawDiff));
+    const edgeHard = Math.max(0, TRACK_HALF - lateralReach);
+    const edgeStart = Math.max(0, edgeHard - EDGE_HYSTERESIS);
+
+    player.onWhiteLine = (alat + lateralReach >= WHITE_LINE_INNER) && (alat - lateralReach <= WHITE_LINE_OUTER);
+
+    // ramp in time rather than over road distance: no penalty until actual contact,
+    // but still a smooth scrape once the car is against the edge.
+    player.edge = Math.max(0, (player.edge || 0) - 5*dt);
+    if (alat > edgeStart){
+      player.edge = Math.min(1, (player.edge || 0) + 12*dt);
+      if (alat > edgeHard){ const c = (alat-edgeHard)*Math.sign(lat); pp.x -= sd.x*c; pp.z -= sd.z*c; }
+      const over = player.edge;
+      // steady braking force (3 m/s2 on first contact, up to 14 m/s2 pinned on the edge),
+      // never stopping the car completely; the throttle target follows the car down
       const FLOOR = 6, dec = (3 + 11*over)*dt;
       if (player.speed > FLOOR) player.speed = Math.max(FLOOR, player.speed - dec);
       else if (player.speed < -FLOOR) player.speed = Math.min(-FLOOR, player.speed + dec);
-      if (over > 0.05 && player.speed > 8) player.targetSpeed = Math.min(player.targetSpeed, player.speed);   // no acceleration while scraping (but always able to creep away)
+      if (over > 0.05 && player.speed > 8) player.targetSpeed = Math.min(player.targetSpeed, player.speed);
       // ease the travel direction back along the track
       const tan = info.sample.tan;
       let targetYaw = Math.atan2(tan.x, tan.z);
@@ -1252,7 +1304,6 @@ function updatePlayer(dt){
   const along = Math.sin(player.moveYaw)*tanS.x + Math.cos(player.moveYaw)*tanS.z;
   player.grade = (dy/dxz) * (along>=0?1:-1) * (player.speed>=0?1:-1);
   player.curIdx = elevInfo.index;
-  // (debug removed)
 
   // progress along track
   // find nearest sample index
@@ -1261,7 +1312,7 @@ function updatePlayer(dt){
   // wrap detection
   if (player.prevProgress > 0.8 && prog < 0.2) {
     player.lap++;
-    if (player.lap >= 3){ player.finished=true; player.finishTime=raceTime; }
+    if (player.lap >= totalLaps){ player.finished=true; player.finishTime=raceTime; }
   }
   player.prevProgress = prog;
   player.progress = prog;
@@ -1271,21 +1322,49 @@ function updateAI(car, dt){
   // progress
   car.progress += (car.speed / totalLen) * dt;
   if (car.progress >= 1) car.progress -= 1;
-  const idx = Math.min(samples.length-1, Math.floor(car.progress*(samples.length-1)));
-  const sm = samples[idx];
-  car.mesh.position.copy(sm.p);
-  car.mesh.position.add(sm.side.clone().multiplyScalar(car.offset));
-  car.mesh.position.y = sm.p.y;
-  const tan = sm.tan;
+  // interpolate between samples so the cars glide instead of jumping sample to sample
+  const fi = car.progress * (samples.length - 1);
+  const i0 = Math.floor(fi) % N;
+  const i1 = (i0 + 1) % N;
+  const f = fi - Math.floor(fi);
+  const a = samples[i0], b = samples[i1];
+  car.mesh.position.copy(a.p).lerp(b.p, f);
+  const side = a.side.clone().lerp(b.side, f).normalize();
+  car.mesh.position.add(side.multiplyScalar(car.offset));
+  const tan = a.tan.clone().lerp(b.tan, f).normalize();
   car.mesh.rotation.y = Math.atan2(tan.x, tan.z);
-  // slight speed variation
-  car.speed = 20 + Math.sin(car.progress*Math.PI*8)*3;
+  // slight per-car speed variation
+  car.speed = car.baseSpeed + Math.sin(car.progress*Math.PI*8 + car.phase)*3;
+}
+
+function checkAICollisions(dt){
+  aiBumpCooldown = Math.max(0, aiBumpCooldown - dt);
+  if (aiBumpCooldown > 0 || player.finished) return;
+  const pp = player.mesh.position;
+  for (const a of aiCars){
+    const ap = a.mesh.position;
+    if (Math.abs(pp.y - ap.y) > 3) continue;   // ignore cars on the other bridge level
+    const dx = pp.x - ap.x, dz = pp.z - ap.z;
+    if (dx*dx + dz*dz > 5.2*5.2) continue;
+    const d = Math.sqrt(dx*dx + dz*dz) || 1;
+    pp.x += dx/d * 0.45;                       // gentle physical bump
+    pp.z += dz/d * 0.45;
+    player.speed *= 0.78;                      // mild slowdown
+    player.targetSpeed *= 0.78;
+    player.slip = Math.min(1, player.slip + 0.15);
+    aiBumpCooldown = 0.35;                     // avoid repeated hits every frame
+    bumpShake = 0.16;
+    break;
+  }
 }
 
 // ---------- Camera ----------
 const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();
+const camLookNow = new THREE.Vector3();
+let whiteShakeTime = 0;
 function updateCamera(dt){
+  bumpShake = Math.max(0, bumpShake - dt);
   const car = player.mesh;
   const yaw = player.yaw;
   const fwd = new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw));
@@ -1299,19 +1378,45 @@ function updateCamera(dt){
   lookTarget.y = car.position.y + 5.0;
   camLook.lerp(lookTarget, 0.15);
   camera.up.set(0,1,0);
-  camera.lookAt(camLook);
+  // touching the white stripe is only a visual cue, not a penalty
+  camLookNow.copy(camLook);
+  whiteShakeTime += dt;
+  if (player.onWhiteLine){
+    const amp = 0.12;
+    camera.position.x += Math.sin(whiteShakeTime*53)*amp;
+    camera.position.y += Math.sin(whiteShakeTime*71+1.3)*amp*0.6;
+    camLookNow.x += Math.sin(whiteShakeTime*47+0.8)*amp*0.5;
+    camLookNow.y += Math.sin(whiteShakeTime*59+2.1)*amp*0.4;
+  }
+  if (bumpShake > 0){
+    const amp = 0.45 * (bumpShake / 0.28);
+    camera.position.x += Math.sin(whiteShakeTime*83)*amp;
+    camera.position.y += Math.sin(whiteShakeTime*97+1.1)*amp*0.6;
+    camLookNow.x += Math.sin(whiteShakeTime*79+0.4)*amp*0.5;
+  }
+  camera.lookAt(camLookNow);
 }
 
 // ---------- Race state ----------
 let state = 'menu';
 let paused = false;
 let raceTime = 0;
-const TOTAL_LAPS = 3;
+let totalLaps = 1;   // press 1-9 to change at any time
+let aiBumpCooldown = 0;
+let bumpShake = 0;
 
 function restart(){
-  player.progress = 0.02; player.prevProgress=0.02; player.speed=0; player.targetSpeed=0; player.yaw=0; player.moveYaw=0; player.slip=0; player.driftAmount=0; player.steerAngle=0; player.lap=0; player.finished=false; player.finishTime=0; player.curIdx=undefined;
-  placeAtProgress(player, 0.02, 0);
-  aiCars.forEach((a,i)=>{ a.progress = 0.02 + i*0.01; a.speed=18+Math.random()*6; placeAtProgress(a, a.progress, a.offset); });
+  player.progress = 0.005; player.prevProgress=0.005; player.speed=0; player.targetSpeed=0; player.yaw=0; player.moveYaw=0; player.slip=0; player.driftAmount=0; player.steerAngle=0; player.lap=0; player.finished=false; player.finishTime=0; player.curIdx=undefined; player.edge=0; player.onWhiteLine=false;
+  placeAtProgress(player, 0.005, 0);
+  aiCars.forEach((a,i)=>{
+    a.progress = 0.04 + i*0.094;
+    a.baseSpeed = 30 + (i%5)*1.6 + Math.random()*3;
+    a.speed = a.baseSpeed;
+    a.phase = Math.random()*Math.PI*2;
+    placeAtProgress(a, a.progress, a.offset);
+  });
+  aiBumpCooldown = 0;
+  bumpShake = 0;
   raceTime = 0;
   state = 'racing';
   paused = false;
@@ -1339,7 +1444,7 @@ function drawMinimap(){
   const ox=pad+(mw-pad*2-(maxX-minX)*sc)/2 - minX*sc;
   const oz=pad+(mh-pad*2-(maxZ-minZ)*sc)/2 - minZ*sc;
   function toM(p){ return {x:p.x*sc+ox, y:p.z*sc+oz}; }
-  // circuit
+  // circuit base
   mctx.lineJoin='round'; mctx.lineCap='round';
   mctx.strokeStyle='#777'; mctx.lineWidth=4;
   mctx.beginPath();
@@ -1352,11 +1457,21 @@ function drawMinimap(){
     for (let i=f.from;i<=f.to;i++){ const m = toM(samples[((i%N)+N)%N].p); if (i===f.from) mctx.moveTo(m.x,m.y); else mctx.lineTo(m.x,m.y); }
     mctx.stroke();
   });
+  // completed portion fills in green as the car covers the circuit
+  const done = Math.max(0, Math.min(1, (player.lap + player.progress) / totalLaps));
+  if (done > 0){
+    const steps = Math.max(1, Math.ceil((samples.length-1)*done));
+    mctx.strokeStyle='#22dd55'; mctx.lineWidth=4;
+    mctx.beginPath();
+    for (let i=0;i<=steps;i++){ const m=toM(samples[i].p); if(i===0) mctx.moveTo(m.x,m.y); else mctx.lineTo(m.x,m.y); }
+    mctx.stroke();
+    mctx.strokeStyle='#aaffbf'; mctx.lineWidth=1.5; mctx.stroke();
+  }
   // start/finish line
   const start = toM(samples[0].p);
   mctx.fillStyle='#ffcc00';
   mctx.fillRect(start.x-3, start.y-3, 6, 6);
-  // player position arrow
+  // player position arrow (AI cars are intentionally not drawn on the map)
   const pm = toM(player.mesh.position);
   const dx = Math.sin(player.yaw), dy = Math.cos(player.yaw);
   const px = -dy, py = dx;
@@ -1371,8 +1486,14 @@ function drawMinimap(){
 }
 
 // ---------- HUD ----------
+function refreshLapUI(){
+  const lapEl = document.getElementById('lap');
+  if (lapEl) lapEl.textContent = 'LAP ' + Math.min(player.lap+1, totalLaps) + '/' + totalLaps;
+  const goal = totalLaps + (totalLaps === 1 ? ' lap' : ' laps');
+  document.querySelectorAll('.lapGoal').forEach(el=>{ el.textContent = goal; });
+}
 function updateHUD(){
-  document.getElementById('lap').textContent = 'LAP ' + Math.min(player.lap+1, TOTAL_LAPS) + '/' + TOTAL_LAPS;
+  refreshLapUI();
   document.getElementById('time').textContent = 'TIME ' + raceTime.toFixed(3);
   const zi = player.curIdx !== undefined ? player.curIdx % N : 0;
   document.getElementById('zone').textContent = BIOMES[sampleBiome[zi]].name + '  ALT ' + Math.round(player.mesh.position.y) + (bridgeOf[zi] >= 0 ? '  [BRIDGE]' : '') + (tunnelOf[zi] >= 0 ? '  [TUNNEL]' : '') + (deckOf[zi] ? '  [OVERPASS]' : '');
@@ -1394,6 +1515,7 @@ function loop(now){
       raceTime += dt;
       updatePlayer(dt);
       aiCars.forEach(c=>updateAI(c,dt));
+      checkAICollisions(dt);
       updateCamera(dt);
       updateParticles(dt);
       if (player.finished){
@@ -1414,6 +1536,7 @@ function loop(now){
   drawMinimap();
   requestAnimationFrame(loop);
 }
+refreshLapUI();
 applyEnvironment();
 requestAnimationFrame(loop);
 
@@ -1454,6 +1577,7 @@ setTimeout(tryStart, 300);
 
 // ---------- Audio ----------
 let audioCtx=null, engineOsc=null, engineOsc2=null, engineGain=null;
+let skidSource=null, skidFilter=null, skidGain=null;
 function initAudio(){
   try {
     if (!audioCtx){
@@ -1475,18 +1599,43 @@ function initAudio(){
       g2.gain.value = 0.3;
       engineOsc2.connect(g2).connect(engineGain);
       engineOsc2.start();
+
+      // looping filtered noise for tyre skid while drifting
+      const len = Math.floor(audioCtx.sampleRate * 2);
+      const noise = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+      const data = noise.getChannelData(0);
+      for (let i=0;i<len;i++) data[i] = Math.random()*2 - 1;
+      skidSource = audioCtx.createBufferSource();
+      skidSource.buffer = noise;
+      skidSource.loop = true;
+      skidFilter = audioCtx.createBiquadFilter();
+      skidFilter.type = 'bandpass';
+      skidFilter.frequency.value = 1800;
+      skidFilter.Q.value = 0.9;
+      skidGain = audioCtx.createGain();
+      skidGain.gain.value = 0;
+      skidSource.connect(skidFilter).connect(skidGain).connect(audioCtx.destination);
+      skidSource.start();
     }
     if (audioCtx.state === 'suspended') audioCtx.resume();
   } catch(e){}
 }
 function updateAudio(){
   if (!audioCtx || !engineOsc) return;
-  const sp = paused ? 0 : Math.min(1, Math.abs(player.speed)/MAX_SPEED);
+  const engineOn = state === 'racing' && !paused && !player.finished;
+  const sp = engineOn ? Math.min(1, Math.abs(player.speed)/MAX_SPEED) : 0;
   const f = 30 + sp*75;
   const now = audioCtx.currentTime;
   engineOsc.frequency.setTargetAtTime(f, now, 0.05);
   engineOsc2.frequency.setTargetAtTime(f*1.5, now, 0.05);
-  engineGain.gain.setTargetAtTime(paused ? 0 : 0.03 + sp*0.12, now, 0.08);
+  engineGain.gain.setTargetAtTime(engineOn ? 0.03 + sp*0.12 : 0, now, 0.03);
+  if (skidGain && skidFilter){
+    const drifting = engineOn && player.drifting && Math.abs(player.speed) > 4;
+    const driftAmt = drifting ? Math.max(0.2, player.driftAmount || 0) : 0;
+    const skidLevel = drifting ? 0.13 * driftAmt * Math.min(1, Math.abs(player.speed)/18) : 0;
+    skidGain.gain.setTargetAtTime(skidLevel, now, 0.04);
+    skidFilter.frequency.setTargetAtTime(1200 + driftAmt*1600, now, 0.05);
+  }
 }
 window.addEventListener('pointerdown', initAudio);
 window.addEventListener('keydown', initAudio);
