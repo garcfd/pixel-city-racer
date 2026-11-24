@@ -15,13 +15,18 @@
   #gameCanvas { image-rendering: pixelated; image-rendering: crisp-edges; width:100%; height:100%; object-fit:contain; }
   #hud { position:fixed; top:10px; left:10px; color:#fff; text-shadow:2px 2px 0 #000; font-size:10px; line-height:1.6; pointer-events:none; z-index:5; }
   #hud .row { margin-bottom:4px; }
-  #minimap { position:fixed; top:118px; left:10px; border:2px solid #fff; image-rendering:pixelated; background:rgba(0,0,0,0.6); z-index:5; width:150px; height:150px; }
+  #minimap { position:fixed; top:170px; left:10px; border:2px solid #fff; image-rendering:pixelated; background:rgba(0,0,0,0.6); z-index:5; width:150px; height:150px; }
   #overlay { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(0,0,0,0.85); color:#fff; z-index:10; text-align:center; gap:12px; }
   #overlay h1 { font-size:24px; color:#ffcc00; }
   #overlay p { font-size:10px; line-height:1.8; max-width:600px; }
   #overlay button { padding:10px 20px; font-family:inherit; font-size:10px; background:#ff3333; color:#fff; border:2px solid #fff; cursor:pointer; }
   #overlay button:hover { background:#ff6666; }
-  #msg { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:16px; text-shadow:2px 2px 0 #000; pointer-events:none; z-index:6; display:none; }
+  #msg { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:16px; text-shadow:2px 2px 0 #000; pointer-events:none; z-index:8; display:none; }
+  #msg.countdown { font-size:48px; color:#ffcc00; }
+  #speedlines { position:fixed; inset:0; z-index:4; pointer-events:none; opacity:0; transition:opacity 0.08s linear;
+    background:repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg 9deg, rgba(255,255,255,0.16) 9deg 10deg, transparent 10deg 18deg);
+    -webkit-mask-image:radial-gradient(circle at 50% 50%, transparent 32%, #000 78%);
+    mask-image:radial-gradient(circle at 50% 50%, transparent 32%, #000 78%); }
   #resetBtn { position:fixed; top:10px; right:10px; z-index:7; font-family:inherit; font-size:10px; padding:8px 14px; background:#ff3333; color:#fff; border:2px solid #fff; cursor:pointer; }
   #resetBtn:hover { background:#ff6666; }
   #pauseBtn { position:fixed; top:52px; right:10px; z-index:7; font-family:inherit; font-size:10px; padding:8px 14px; background:#3333ff; color:#fff; border:2px solid #fff; cursor:pointer; }
@@ -46,10 +51,14 @@
 </head>
 <body>
 <div id="wrap"><canvas id="gameCanvas"></canvas></div>
+<div id="speedlines"></div>
 <div id="hud">
   <div class="row" id="speed">SPEED 0</div>
-  <div class="row" id="lap">LAP 1/3</div>
+  <div class="row" id="lap">LAP 1/1</div>
   <div class="row" id="time">TIME 0.000</div>
+  <div class="row" id="pos">POS 1/10</div>
+  <div class="row" id="best">BEST --</div>
+  <div class="row" id="drift">DRIFT 0</div>
   <div class="row" id="zone">ZONE</div>
 </div>
 <!-- speed bar -->
@@ -72,7 +81,8 @@
     <h2>CONTROLS</h2>
     <span class="k">LEFT / RIGHT</span> &mdash; steer<br>
     <span class="k">UP / DOWN</span> &mdash; adjust target speed (reverse at 0)<br>
-    <span class="k">SHIFT</span> &mdash; drift<br>
+    <span class="k">SHIFT</span> &mdash; drift (build score)<br>
+    <span class="k">CYAN PADS</span> &mdash; speed boost<br>
     <span class="k">A / Z</span> &mdash; steering sensitivity up / down<br>
     <span class="k">W</span> &mdash; cycle weather<br>
     <span class="k">R</span> &mdash; restart<br>
@@ -890,6 +900,60 @@ function buildRoad() {
 const world = buildRoad();
 scene.add(world);
 
+// ---------- Boost pads ----------
+const boostPads = [];
+const BOOST_PROGRESSES = [0.12, 0.33, 0.55, 0.77];
+{
+  const padGeo = new THREE.PlaneGeometry(12, 9);
+  const stripeGeo = new THREE.PlaneGeometry(10, 1.1);
+  BOOST_PROGRESSES.forEach((prog, i)=>{
+    const idx = Math.floor(prog*N);
+    const s = samples[idx];
+    const group = new THREE.Group();
+    group.position.copy(s.p);
+    group.position.y += 0.25;
+    group.rotation.y = Math.atan2(s.tan.x, s.tan.z);
+    const mat = new THREE.MeshBasicMaterial({ color:0x00ffff, transparent:true, opacity:0.9, side:THREE.DoubleSide, depthWrite:false });
+    const pad = new THREE.Mesh(padGeo, mat);
+    pad.rotation.x = -Math.PI/2;
+    group.add(pad);
+    const stripeMat = new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:1.0, side:THREE.DoubleSide, depthWrite:false });
+    [-2.6, 0, 2.6].forEach(off=>{
+      const stripe = new THREE.Mesh(stripeGeo, stripeMat);
+      stripe.rotation.x = -Math.PI/2;
+      stripe.position.z = off;
+      group.add(stripe);
+    });
+    scene.add(group);
+    boostPads.push({ mesh:group, mat, idx, cooldown:0, phase:i*1.4 });
+  });
+}
+
+// ---------- Start / finish line ----------
+{
+  const s = samples[0];
+  const cv = document.createElement('canvas');
+  cv.width = 64; cv.height = 16;
+  const cx = cv.getContext('2d');
+  for (let y=0;y<2;y++) for (let x=0;x<8;x++){
+    cx.fillStyle = (x+y)%2 ? '#ffffff' : '#111111';
+    cx.fillRect(x*8, y*8, 8, 8);
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.magFilter = THREE.NearestFilter;
+  const line = new THREE.Mesh(
+    new THREE.PlaneGeometry(TRACK_HALF*2, 3.5),
+    new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide })
+  );
+  line.rotation.x = -Math.PI/2;
+  const group = new THREE.Group();
+  group.position.copy(s.p);
+  group.position.y += 0.3;
+  group.rotation.y = Math.atan2(s.tan.x, s.tan.z);
+  group.add(line);
+  scene.add(group);
+}
+
 // ---------- Car ----------
 function makeCar(color) {
   const g = new THREE.Group();
@@ -999,18 +1063,19 @@ function makeCar(color) {
 const playerCar = makeCar(0xff3333);
 scene.add(playerCar);
 const aiCars = [];
-const aiColors = [0x3366ff, 0xffcc00, 0x33cc66, 0xcc33cc, 0xff6600, 0x00ccff, 0xeeeeee, 0xff3399, 0x99cc00, 0x8844ff];
+const aiColors = [0x3366ff];
 for (let i=0;i<aiColors.length;i++){
   const c = makeCar(aiColors[i]);
   scene.add(c);
-  const baseSpeed = 30 + (i%5)*1.6 + Math.random()*3;
+  const baseSpeed = 34 + Math.random()*3;
   aiCars.push({
     mesh: c,
-    progress: 0.04 + i*0.094,
+    lap: 0,
+    progress: 0.085,
     speed: baseSpeed,
     baseSpeed,
     phase: Math.random()*Math.PI*2,
-    offset: (i%2===0 ? -4 : 4) + (Math.random()-0.5)*2
+    offset: 0
   });
 }
 
@@ -1033,7 +1098,7 @@ function placeAtProgress(carObj, prog, lateral){
 }
 
 placeAtProgress(player, 0.005, 0);
-aiCars.forEach((a,i)=> placeAtProgress(a, a.progress, a.offset));
+aiCars.forEach(a=>{ a.offset = racingLineOffset(Math.floor(a.progress*(N-1))); placeAtProgress(a, a.progress, a.offset); });
 
 // ---------- Lighting ----------
 const ambient = new THREE.AmbientLight(0xffffff, 0.6);
@@ -1112,6 +1177,24 @@ const snow = new THREE.Points(snowGeo, snowMat);
 scene.add(snow);
 snow.visible = false;
 
+// drift smoke pool
+const SMOKE_MAX = 90;
+const smokeGeo = new THREE.BufferGeometry();
+const smokePos = new Float32Array(SMOKE_MAX*3);
+const smokeVel = new Float32Array(SMOKE_MAX*3);
+const smokeLife = new Float32Array(SMOKE_MAX);
+for (let i=0;i<SMOKE_MAX;i++) smokePos[i*3+1] = -1000;
+smokeGeo.setAttribute('position', new THREE.BufferAttribute(smokePos,3));
+const smokeMat = new THREE.PointsMaterial({ color:0xf0f0f0, size:2.2, transparent:true, opacity:0.5, depthWrite:false });
+const smoke = new THREE.Points(smokeGeo, smokeMat);
+smoke.frustumCulled = false;
+scene.add(smoke);
+let smokeCursor = 0;
+function resetSmoke(){
+  for (let i=0;i<SMOKE_MAX;i++){ smokeLife[i]=0; smokePos[i*3+1]=-1000; }
+  smoke.geometry.attributes.position.needsUpdate = true;
+}
+
 function updateParticles(dt){
   const pp = player.mesh.position;
   rain.position.set(pp.x, pp.y-8, pp.z); snow.position.copy(rain.position);
@@ -1135,6 +1218,32 @@ function updateParticles(dt){
     }
     snow.geometry.attributes.position.needsUpdate = true;
   }
+  for (let i=0;i<SMOKE_MAX;i++){
+    if (smokeLife[i] <= 0) continue;
+    smokeLife[i] -= dt;
+    if (smokeLife[i] <= 0){ smokePos[i*3+1] = -1000; continue; }
+    smokePos[i*3]   += smokeVel[i*3]*dt;
+    smokePos[i*3+1] += smokeVel[i*3+1]*dt;
+    smokePos[i*3+2] += smokeVel[i*3+2]*dt;
+  }
+  if (player.drifting && Math.abs(player.speed) > 4 && state === 'racing' && !paused){
+    const fx = Math.sin(player.yaw), fz = Math.cos(player.yaw);
+    const rx = fz, rz = -fx;
+    for (let k=0;k<3;k++){
+      const side = k%2 === 0 ? -1 : 1;
+      {
+        const i = smokeCursor++ % SMOKE_MAX;
+        smokePos[i*3]   = pp.x - fx*1.8 + rx*1.05*side + (Math.random()-0.5)*0.6;
+        smokePos[i*3+1] = pp.y + 0.3;
+        smokePos[i*3+2] = pp.z - fz*1.8 + rz*1.05*side + (Math.random()-0.5)*0.6;
+        smokeVel[i*3]   = -fx*2 + (Math.random()-0.5)*3;
+        smokeVel[i*3+1] = 1.2 + Math.random()*1.5;
+        smokeVel[i*3+2] = -fz*2 + (Math.random()-0.5)*3;
+        smokeLife[i] = 0.8 + Math.random()*0.5;
+      }
+    }
+  }
+  smoke.geometry.attributes.position.needsUpdate = true;
 }
 
 // ---------- Input ----------
@@ -1187,6 +1296,8 @@ const EDGE_HYSTERESIS = 0.04;                           // keeps contact state s
 function updatePlayer(dt){
   if (player.finished) return;
   if (player.lap >= totalLaps){ player.finished=true; player.finishTime=raceTime; return; }
+  boostTime = Math.max(0, boostTime - dt);
+  const speedCap = MAX_SPEED + (boostTime > 0 ? 25 : 0);
   const up = keys['arrowup'];
   const down = keys['arrowdown'];
   const left = keys['arrowleft'];
@@ -1196,7 +1307,7 @@ function updatePlayer(dt){
   const SPEED_RATE = 28;
   if (up && !(player.edge > 0.05 && player.speed > 8)) player.targetSpeed += SPEED_RATE*dt;   // no throttle build-up while scraping the edge
   if (down) player.targetSpeed -= SPEED_RATE*dt;
-  player.targetSpeed = Math.max(-18, Math.min(MAX_SPEED, player.targetSpeed));
+  player.targetSpeed = Math.max(-18, Math.min(speedCap, player.targetSpeed));
   const effTarget = player.targetSpeed - (player.grade||0)*SLOPE_K*Math.max(0, Math.min(1, player.targetSpeed/10));
   if (!(player.edge > 0.05 && player.speed > 8)){   // while scraping the edge only the edge penalty changes the speed
     if (player.speed < effTarget) player.speed = Math.min(effTarget, player.speed + ACCEL*dt);
@@ -1206,7 +1317,7 @@ function updatePlayer(dt){
   let grip = 1;
   if (weather===1) grip=0.7;
   if (weather===3) grip=0.5;
-  player.speed = Math.max(-18, Math.min(MAX_SPEED, player.speed));
+  player.speed = Math.max(-18, Math.min(speedCap, player.speed));
   const steerInput = (left?1:0) - (right?1:0);
   // smooth steering with limit to prevent oversteer
   const steerLerp = Math.min(1, 10*dt);
@@ -1311,6 +1422,9 @@ function updatePlayer(dt){
   const prog = idx / (samples.length-1);
   // wrap detection
   if (player.prevProgress > 0.8 && prog < 0.2) {
+    const lapTime = raceTime - lapStartTime;
+    if (lapTime > 0.1 && (bestLap === 0 || lapTime < bestLap)) bestLap = lapTime;
+    lapStartTime = raceTime;
     player.lap++;
     if (player.lap >= totalLaps){ player.finished=true; player.finishTime=raceTime; }
   }
@@ -1318,10 +1432,18 @@ function updatePlayer(dt){
   player.progress = prog;
 }
 
+function racingLineOffset(i){
+  const a = samples[(i-6+N)%N].tan, b = samples[(i+6)%N].tan;
+  const cross = a.z*b.x - a.x*b.z;
+  const dot = a.x*b.x + a.z*b.z;
+  const angle = Math.atan2(cross, dot);   // + = right-hand bend
+  return -Math.max(-1, Math.min(1, angle/0.4))*3.2;   // bias toward the inside of the bend
+}
+
 function updateAI(car, dt){
   // progress
   car.progress += (car.speed / totalLen) * dt;
-  if (car.progress >= 1) car.progress -= 1;
+  if (car.progress >= 1){ car.progress -= 1; car.lap++; }
   // interpolate between samples so the cars glide instead of jumping sample to sample
   const fi = car.progress * (samples.length - 1);
   const i0 = Math.floor(fi) % N;
@@ -1330,11 +1452,28 @@ function updateAI(car, dt){
   const a = samples[i0], b = samples[i1];
   car.mesh.position.copy(a.p).lerp(b.p, f);
   const side = a.side.clone().lerp(b.side, f).normalize();
-  car.mesh.position.add(side.multiplyScalar(car.offset));
+  const line = racingLineOffset(i0) + (racingLineOffset(i1)-racingLineOffset(i0))*f;
+  car.mesh.position.add(side.multiplyScalar(line));
   const tan = a.tan.clone().lerp(b.tan, f).normalize();
   car.mesh.rotation.y = Math.atan2(tan.x, tan.z);
-  // slight per-car speed variation
-  car.speed = car.baseSpeed + Math.sin(car.progress*Math.PI*8 + car.phase)*3;
+  // slight per-car speed variation plus rubber-banding toward the player
+  const variation = Math.sin(car.progress*Math.PI*8 + car.phase)*3;
+  const gap = (player.lap + player.progress) - ((car.lap||0) + car.progress);
+  const rubber = Math.max(-4, Math.min(6, gap*18));
+  car.speed = Math.max(18, Math.min(48, car.baseSpeed + variation + rubber));
+}
+
+function carsOverlap(pa, ya, pb, yb){
+  const fa={x:Math.sin(ya), z:Math.cos(ya)}, ra={x:Math.cos(ya), z:-Math.sin(ya)};
+  const fb={x:Math.sin(yb), z:Math.cos(yb)}, rb={x:Math.cos(yb), z:-Math.sin(yb)};
+  const dx=pb.x-pa.x, dz=pb.z-pa.z;
+  for (const u of [fa,ra,fb,rb]){
+    const d=Math.abs(dx*u.x+dz*u.z);
+    const raExt=CAR_HALF_LENGTH*Math.abs(fa.x*u.x+fa.z*u.z)+CAR_HALF_WIDTH*Math.abs(ra.x*u.x+ra.z*u.z);
+    const rbExt=CAR_HALF_LENGTH*Math.abs(fb.x*u.x+fb.z*u.z)+CAR_HALF_WIDTH*Math.abs(rb.x*u.x+rb.z*u.z);
+    if (d > raExt+rbExt) return false;
+  }
+  return true;
 }
 
 function checkAICollisions(dt){
@@ -1342,10 +1481,11 @@ function checkAICollisions(dt){
   if (aiBumpCooldown > 0 || player.finished) return;
   const pp = player.mesh.position;
   for (const a of aiCars){
+    if (!a.mesh.visible) continue;
     const ap = a.mesh.position;
-    if (Math.abs(pp.y - ap.y) > 3) continue;   // ignore cars on the other bridge level
+    if (Math.abs(pp.y - ap.y) > 2) continue;   // different bridge level
+    if (!carsOverlap(pp, player.yaw, ap, a.mesh.rotation.y)) continue;   // real body contact
     const dx = pp.x - ap.x, dz = pp.z - ap.z;
-    if (dx*dx + dz*dz > 5.2*5.2) continue;
     const d = Math.sqrt(dx*dx + dz*dz) || 1;
     pp.x += dx/d * 0.45;                       // gentle physical bump
     pp.z += dz/d * 0.45;
@@ -1359,8 +1499,8 @@ function checkAICollisions(dt){
 }
 
 // ---------- Camera ----------
-const camPos = new THREE.Vector3();
-const camLook = new THREE.Vector3();
+const camAnchor = new THREE.Vector3();
+const camFwd = new THREE.Vector3(0,0,1);
 const camLookNow = new THREE.Vector3();
 let whiteShakeTime = 0;
 function updateCamera(dt){
@@ -1368,18 +1508,17 @@ function updateCamera(dt){
   const car = player.mesh;
   const yaw = player.yaw;
   const fwd = new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw));
-  // behind and above
-  const targetCam = car.position.clone().add(fwd.clone().multiplyScalar(-9));
-  targetCam.y = car.position.y + 4.5;
-  camPos.lerp(targetCam, 0.08);
-  camera.position.copy(camPos);
-  // aim high so the car sits near the bottom of the frame
-  const lookTarget = car.position.clone().add(fwd.clone().multiplyScalar(3));
-  lookTarget.y = car.position.y + 5.0;
-  camLook.lerp(lookTarget, 0.15);
+  const a = Math.min(1, dt*6);
+  camAnchor.lerp(car.position, a);
+  camFwd.lerp(fwd, a).normalize();
+  // camera and look target share the same smoothed anchor, so the car's screen height stays steady
+  camera.position.copy(camAnchor).addScaledVector(camFwd, -9);
+  camera.position.y = camAnchor.y + 4.5;
+  const lookTarget = camAnchor.clone().addScaledVector(camFwd, 3);
+  lookTarget.y = camAnchor.y + 5.0;
   camera.up.set(0,1,0);
   // touching the white stripe is only a visual cue, not a penalty
-  camLookNow.copy(camLook);
+  camLookNow.copy(lookTarget);
   whiteShakeTime += dt;
   if (player.onWhiteLine){
     const amp = 0.12;
@@ -1404,25 +1543,112 @@ let raceTime = 0;
 let totalLaps = 1;   // press 1-9 to change at any time
 let aiBumpCooldown = 0;
 let bumpShake = 0;
+let aiPassed = false;
+const AI_OUT_OF_VIEW = 30;   // metres behind before the rival is recycled
+
+function placeAIAhead(){
+  const a = aiCars[0];
+  if (!a) return;
+  let p = player.progress + 250/totalLen;
+  let lap = player.lap;
+  if (p >= 1){ p -= 1; lap++; }
+  a.progress = p;
+  a.lap = lap;
+  a.baseSpeed = Math.max(28, Math.min(44, Math.abs(player.speed) + 2 + Math.random()*4));
+  a.speed = a.baseSpeed;
+  a.phase = Math.random()*Math.PI*2;
+  a.offset = racingLineOffset(Math.floor(a.progress*(N-1)));
+  aiPassed = false;
+  a.mesh.visible = true;
+  placeAtProgress(a, a.progress, a.offset);
+}
+
+function updateAIRival(dt){
+  const a = aiCars[0];
+  if (!a) return;
+  updateAI(a, dt);
+  const behind = ((player.lap + player.progress) - ((a.lap||0) + a.progress)) * totalLen;
+  if (behind > 0 && !aiPassed) aiPassed = true;
+  if (aiPassed && behind > AI_OUT_OF_VIEW) placeAIAhead();
+}
+let countdownTime = 0;
+let lastCount = null;
+let bestLap = 0;
+let lapStartTime = 0;
+let racePosition = 1;
+let driftScore = 0;
+let driftChain = 0;
+let driftTime = 0;
+let driftCombo = 1;
+let boostFlash = 0;
+let boostTime = 0;
+
+function updateDriftScore(dt){
+  const active = state === 'racing' && !paused && !player.finished && player.drifting && Math.abs(player.speed) > 4;
+  if (active){
+    driftTime += dt;
+    driftCombo = 1 + Math.min(4, Math.floor(driftTime/1.2));
+    driftChain += dt * Math.abs(player.speed) * (0.5 + player.driftAmount) * 2 * driftCombo;
+  } else if (driftChain > 0){
+    if (driftTime > 0.35) driftScore += Math.round(driftChain);
+    driftChain = 0; driftTime = 0; driftCombo = 1;
+  }
+}
+
+function checkBoostPads(dt){
+  boostFlash = Math.max(0, boostFlash - dt);
+  boostPads.forEach(p=>{ p.cooldown = Math.max(0, p.cooldown - dt); p.mat.opacity = 0.65 + 0.35*Math.sin(raceTime*4 + p.phase); });
+  if (state !== 'racing' || paused || player.finished) return;
+  const pp = player.mesh.position;
+  for (const p of boostPads){
+    if (p.cooldown > 0) continue;
+    const s = samples[p.idx];
+    const dx = pp.x - s.p.x, dz = pp.z - s.p.z;
+    const along = dx*s.tan.x + dz*s.tan.z;       // forward distance from pad centre
+    const lateral = dx*s.side.x + dz*s.side.z;   // sideways distance
+    if (Math.abs(along) <= 4.5 && Math.abs(lateral) <= 6 && Math.abs(pp.y - s.p.y) < 3){
+      player.speed = Math.min(MAX_SPEED + 25, player.speed + 25);
+      player.targetSpeed = player.speed;
+      boostTime = 1.2;
+      p.cooldown = 1.6;
+      boostFlash = 0.8;
+    }
+  }
+}
+
+function updateRacePosition(){
+  const myDist = player.lap + player.progress;
+  let ahead = 0;
+  for (const a of aiCars) if (a.mesh.visible && (a.lap||0) + a.progress > myDist) ahead++;
+  racePosition = ahead + 1;
+}
 
 function restart(){
   player.progress = 0.005; player.prevProgress=0.005; player.speed=0; player.targetSpeed=0; player.yaw=0; player.moveYaw=0; player.slip=0; player.driftAmount=0; player.steerAngle=0; player.lap=0; player.finished=false; player.finishTime=0; player.curIdx=undefined; player.edge=0; player.onWhiteLine=false;
   placeAtProgress(player, 0.005, 0);
-  aiCars.forEach((a,i)=>{
-    a.progress = 0.04 + i*0.094;
-    a.baseSpeed = 30 + (i%5)*1.6 + Math.random()*3;
-    a.speed = a.baseSpeed;
-    a.phase = Math.random()*Math.PI*2;
-    placeAtProgress(a, a.progress, a.offset);
-  });
+  placeAIAhead();
   aiBumpCooldown = 0;
   bumpShake = 0;
+  bestLap = 0; lapStartTime = 0; racePosition = 1;
+  driftScore = 0; driftChain = 0; driftTime = 0; driftCombo = 1;
+  boostFlash = 0; boostTime = 0;
+  boostPads.forEach(p=>{ p.cooldown = 0; });
+  resetSmoke();
+  // put the camera behind the car before the countdown starts
+  camAnchor.copy(player.mesh.position);
+  camFwd.set(Math.sin(player.yaw),0,Math.cos(player.yaw));
+  updateCamera(0);
   raceTime = 0;
-  state = 'racing';
+  countdownTime = 3.2;
+  lastCount = null;
+  state = 'countdown';
   paused = false;
+  const msg = document.getElementById('msg');
+  msg.className = 'countdown';
+  msg.style.display = 'block';
+  msg.textContent = '3';
   document.getElementById('pauseBtn').textContent = 'PAUSE';
   document.getElementById('overlay').style.display='none';
-  document.getElementById('msg').style.display='none';
 }
 
 // ---------- Minimap ----------
@@ -1495,6 +1721,14 @@ function refreshLapUI(){
 function updateHUD(){
   refreshLapUI();
   document.getElementById('time').textContent = 'TIME ' + raceTime.toFixed(3);
+  document.getElementById('pos').textContent = 'POS ' + racePosition + '/' + (aiCars.length+1);
+  document.getElementById('best').textContent = 'BEST ' + (bestLap ? bestLap.toFixed(3) : '--');
+  document.getElementById('drift').textContent = 'DRIFT ' + driftScore + (driftChain > 0 ? ' +' + Math.round(driftChain) + ' x' + driftCombo : '');
+  const speedLines = document.getElementById('speedlines');
+  if (speedLines){
+    const fast = Math.max(0, (Math.abs(player.speed)/MAX_SPEED - 0.65)/0.35);
+    speedLines.style.opacity = Math.min(0.9, fast*0.45 + boostFlash*0.9).toFixed(3);
+  }
   const zi = player.curIdx !== undefined ? player.curIdx % N : 0;
   document.getElementById('zone').textContent = BIOMES[sampleBiome[zi]].name + '  ALT ' + Math.round(player.mesh.position.y) + (bridgeOf[zi] >= 0 ? '  [BRIDGE]' : '') + (tunnelOf[zi] >= 0 ? '  [TUNNEL]' : '') + (deckOf[zi] ? '  [OVERPASS]' : '');
   const gearTag = (player.edge > 0.05 ? '  [EDGE]' : '') + (player.drifting ? '  [DRIFT]' : (player.speed < -0.2 ? '  [REV]' : (gasOn ? '  [GAS]' : (brakeOn ? '  [BRAKE]' : ''))));
@@ -1510,17 +1744,35 @@ let last = performance.now();
 function loop(now){
   const dt = Math.min(0.05, (now-last)/1000);
   last = now;
-  if (state === 'racing'){
+  if (state === 'countdown'){
+    updateCamera(dt);
+    countdownTime -= dt;
+    const msg = document.getElementById('msg');
+    const label = countdownTime > 0.2 ? String(Math.ceil(countdownTime - 0.2)) : 'GO!';
+    if (label !== lastCount){
+      lastCount = label;
+      beep(label === 'GO!' ? 220 : 150, label === 'GO!' ? 1.0 : 0.5);
+    }
+    msg.textContent = label;
+    if (countdownTime <= 0){
+      state = 'racing';
+      setTimeout(()=>{ if (state === 'racing'){ msg.className = ''; msg.style.display = 'none'; } }, 500);
+    }
+  } else if (state === 'racing'){
     if (!paused){
       raceTime += dt;
       updatePlayer(dt);
-      aiCars.forEach(c=>updateAI(c,dt));
+      updateAIRival(dt);
       checkAICollisions(dt);
+      checkBoostPads(dt);
+      updateDriftScore(dt);
+      updateRacePosition();
       updateCamera(dt);
       updateParticles(dt);
       if (player.finished){
         state='finished';
         const msg = document.getElementById('msg');
+        msg.className = '';
         msg.style.display='block';
         msg.textContent = 'FINISHED! ' + player.finishTime.toFixed(2) + 's';
       }
@@ -1619,6 +1871,22 @@ function initAudio(){
     }
     if (audioCtx.state === 'suspended') audioCtx.resume();
   } catch(e){}
+}
+function beep(freq, dur){
+  if (!audioCtx) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  const t = audioCtx.currentTime;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = 'square';
+  o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.3, t + 0.02);
+  g.gain.setValueAtTime(0.3, t + Math.max(0.02, dur - 0.03));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(t);
+  o.stop(t + dur + 0.02);
 }
 function updateAudio(){
   if (!audioCtx || !engineOsc) return;
