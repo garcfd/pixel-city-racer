@@ -7,7 +7,6 @@
 <meta http-equiv="Expires" content="0">
 <title>Pixel City Racer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preload" as="image" href="circuit-map.png">
 <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
@@ -19,7 +18,7 @@
   #hud .row { margin-bottom:4px; }
   #minimap { position:fixed; top:170px; left:10px; border:2px solid #fff; image-rendering:pixelated; background:rgba(0,0,0,0.6); z-index:5; width:150px; height:150px; }
   #overlay { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(0,0,0,0.85); color:#fff; z-index:10; text-align:center; gap:12px; }
-  #overlay h1 { font-size:24px; color:#ffcc00; }
+  #overlay h1 { font-size:24px; color:#2f80ed; }
   #startMap { width:480px; height:300px; border:2px solid #fff; image-rendering:pixelated; background:#050510; }
   #overlay p { font-size:10px; line-height:1.8; max-width:600px; }
   #overlay button { padding:10px 20px; font-family:inherit; font-size:10px; background:#ff3333; color:#fff; border:2px solid #fff; cursor:pointer; }
@@ -45,7 +44,9 @@
   #speedbar { position:fixed; right:16px; top:50%; transform:translateY(-50%); z-index:6; display:flex; flex-direction:column; align-items:center; gap:6px; color:#fff; text-shadow:2px 2px 0 #000; font-size:8px; pointer-events:none; }
   #speedmin { font-size:12px; letter-spacing:0.5px; }
   #speedunit { font-size:8px; letter-spacing:1px; opacity:0.8; margin-top:-4px; }
+  #speedwrap { position:relative; width:26px; height:180px; }
   #speedtrack { width:26px; height:180px; border:2px solid #fff; background:linear-gradient(to bottom,rgba(255,0,0,0.9) 0 16.667%,rgba(0,0,0,0.6) 16.667% 100%); position:relative; overflow:hidden; }
+  #speedmark { position:absolute; left:-8px; right:-8px; bottom:0; height:3px; background:#fff; box-shadow:0 0 0 1px #000; z-index:4; pointer-events:none; transition:bottom 0.08s linear; }
   #redzone { position:absolute; left:0; right:0; top:0; height:16.667%; z-index:0; background:#ff0000; }
   #speedfill { position:absolute; left:0; bottom:0; width:100%; height:0%; z-index:1; background:linear-gradient(to top,#33cc33 0%,#ffcc00 60%,#ff2020 83.333%,#ff0000 100%); background-size:100% 180px; background-position:bottom; transition:height 0.08s linear; }
   #speedtrack::before { content:''; position:absolute; left:0; right:0; bottom:83.333%; height:2px; z-index:3; pointer-events:none; background:#fff; }
@@ -71,7 +72,7 @@
 <div id="speedbar">
   <div id="speedmax">300</div>
   <div id="speedunit">KPH</div>
-  <div id="speedtrack"><div id="redzone"></div><div id="speedfill"></div></div>
+  <div id="speedwrap"><div id="speedtrack"><div id="redzone"></div><div id="speedfill"></div></div><div id="speedmark"></div></div>
   <div id="speedmin">0</div>
   <div id="senslabel">SENS</div>
   <div id="senstrack"><div id="sensfill"></div></div>
@@ -90,7 +91,7 @@
     <span class="k">UP / DOWN</span> &mdash; adjust target speed (reverse at 0)<br>
     <span class="k">SHIFT</span> &mdash; drift (build score)<br>
     <span class="k">CYAN PADS</span> &mdash; speed boost<br>
-    <span class="k">\</span> &mdash; burst boost +20%<br>
+    <span class="k">\</span> &mdash; burst boost +20% for 2s (3s cooldown)<br>
     <span class="k">A / Z</span> &mdash; steering sensitivity up / down<br>
     <span class="k">W</span> &mdash; cycle weather<br>
     <span class="k">R</span> &mdash; restart<br>
@@ -102,8 +103,8 @@
 </div>
 <div id="overlay">
   <h1>PIXEL CITY RACER</h1>
-  <img id="startMap" src="circuit-map.png" width="480" height="300" alt="Circuit map">
-  <p>PINK = TUNNELS (NORTH / WEST / EAST), LIGHT BLUE = ICE, YELLOW = START.<br>Arrow keys: LEFT/RIGHT steer, UP accel, DOWN brake.<br>SHIFT = drift, A/Z = steering sensitivity up/down, R = restart, 1-9 = laps.<br>Complete <span class="lapGoal">1 lap</span> to win.</p>
+  <img id="startMap" src="circuit-map.png?v=2" width="480" height="300" alt="Circuit map">
+  <p>YELLOW = TUNNELS (NORTH / WEST / EAST), LIGHT BLUE = ICE, RED SQUARE = START/FINISH.<br>Arrow keys: LEFT/RIGHT steer, UP accel, DOWN brake.<br>SHIFT = drift, \ = burst boost, A/Z = steering sensitivity up/down, R = restart, 1-9 = laps.<br>Complete <span class="lapGoal">1 lap</span> to win.</p>
   <button id="startBtn">START</button>
 </div>
 <script type="module">
@@ -332,7 +333,8 @@ TERR_EXT += 130;
 const BR = { wc:30, R0:68, R1:120 };   // river half-width, river half-length, fade-out radius
 const TUN_H = 7.5, TL = 30;             // tunnel clearance height, tunnel length in samples
 const NW = 1, NT = 3;                   // southeast ice crossing / north-west-east tunnels
-const WATER_LEN = 30, WATER_HALF = WATER_LEN >> 1;  // long ice patch on the road surface
+const WATER_UP = 15, WATER_DOWN = 45;  // start 10 later, 20 extra downstream
+const WATER_LEN = WATER_UP + WATER_DOWN + 1;  // 61 samples
 const bridges = [], tunnels = [], waterCrossings = [], FEATURES = [];
 const bridgeOf = new Int8Array(N).fill(-1), tunnelOf = new Int8Array(N).fill(-1), moundOf = new Int8Array(N).fill(-1);
 const waterOf = new Int8Array(N).fill(-1);
@@ -384,25 +386,15 @@ for (let w=0;w<NW;w++){          // single ice crossing on a clear southeast str
   let best = -1, bestScore = Infinity;
   for (let i=0;i<N;i++){
     if (waterCrossings.some(o=>cdist(o.idx,i) < N/(NW*3))) continue;
-    let free = true;
-    for (let j=-WATER_HALF;j<=WATER_HALF && free;j++) if (occ[(i+j+N)%N]) free = false;
-    if (!free) continue;
-    const s = samples[i], tl = Math.hypot(s.tan.x,s.tan.z) || 1;
-    const tx = s.tan.x/tl, tz = s.tan.z/tl;
-    let worst = 0;
-    for (let j=0;j<WATER_LEN+2;j++){
-      const q = samples[(i+j)%N].p;
-      worst = Math.max(worst, Math.abs(-tz*(q.x-s.p.x)+tx*(q.z-s.p.z)));
-    }
-    if (worst > 80) continue;
+    const s = samples[i];
     const score = (s.p.x-170)**2 + (s.p.z-306)**2;  // keep the original southeast ice patch
     if (score < bestScore){ bestScore = score; best = i; }
   }
   if (best < 0) break;
   const wi = waterCrossings.length; waterCrossings.push({ idx:best });
-  for (let j=-WATER_HALF;j<=WATER_HALF;j++) occ[(best+j+N)%N] = 1;
-  for (let j=-WATER_HALF;j<=WATER_HALF;j++) waterOf[(best+j+N)%N] = wi;
-  FEATURES.push({ type:'water', from:best-WATER_HALF, to:best+WATER_HALF });
+  for (let j=-WATER_UP;j<=WATER_DOWN;j++) occ[(best+j+N)%N] = 1;
+  for (let j=-WATER_UP;j<=WATER_DOWN;j++) waterOf[(best+j+N)%N] = wi;
+  FEATURES.push({ type:'water', from:best-WATER_UP, to:best+WATER_DOWN });
 }
 const tunnelTargets = [
   { name:'NORTH', score:p=>p.z },
@@ -644,7 +636,7 @@ function buildFeatures(group){
   iceTex.magFilter = iceTex.minFilter = THREE.LinearFilter;
   const iceMat = new THREE.MeshBasicMaterial({ map:iceTex, color:0xffffff, transparent:true, opacity:0.86, side:THREE.DoubleSide, depthWrite:false });
   waterCrossings.forEach(w=>{
-    const S = []; for (let j=-WATER_HALF;j<=WATER_HALF;j++) S.push(samples[(w.idx+j+N)%N]);
+    const S = []; for (let j=-WATER_UP;j<=WATER_DOWN;j++) S.push(samples[(w.idx+j+N)%N]);
     group.add(ringStrip(S.map(s=>[edge(s,-half,0.08), edge(s,half,0.08)]), iceMat));
   });
   for (const x of crossings){
@@ -819,7 +811,7 @@ function buildScenery(group){
     if (nn.d < TRACK_HALF+7 || inWater(x,z) || (tunnelOf[nn.i] >= 0 && nn.d < 26)) continue;
     const biome = sampleBiome[nn.i];
     // only suppress the white roadside mounds (snowdrifts) at the ice section
-    const icePuffZone = waterCrossings.some(w=>cdist(nn.i,w.idx) < WATER_HALF + 30) ||
+    const icePuffZone = waterCrossings.some(w=>cdist(nn.i,w.idx) < WATER_DOWN + 30) ||
                         (iceC && Math.hypot(x-iceC.x, z-iceC.z) < 260);
     const y = terrainHeight(x,z,nn);
     const r = Math.random(), sc = 0.8 + Math.random()*0.7;
@@ -1645,17 +1637,23 @@ function updateAI(car, dt){
   car.speed = Math.max(18, Math.min(48, car.baseSpeed + variation + rubber));
 }
 
-function carsOverlap(pa, ya, pb, yb){
+function carSeparation(pa, ya, pb, yb){
   const fa={x:Math.sin(ya), z:Math.cos(ya)}, ra={x:Math.cos(ya), z:-Math.sin(ya)};
   const fb={x:Math.sin(yb), z:Math.cos(yb)}, rb={x:Math.cos(yb), z:-Math.sin(yb)};
-  const dx=pb.x-pa.x, dz=pb.z-pa.z;
+  const dx=pa.x-pb.x, dz=pa.z-pb.z;   // from rival to player
+  let best=null;
   for (const u of [fa,ra,fb,rb]){
-    const d=Math.abs(dx*u.x+dz*u.z);
+    const dist=dx*u.x+dz*u.z;
     const raExt=CAR_HALF_LENGTH*Math.abs(fa.x*u.x+fa.z*u.z)+CAR_HALF_WIDTH*Math.abs(ra.x*u.x+ra.z*u.z);
     const rbExt=CAR_HALF_LENGTH*Math.abs(fb.x*u.x+fb.z*u.z)+CAR_HALF_WIDTH*Math.abs(rb.x*u.x+rb.z*u.z);
-    if (d > raExt+rbExt) return false;
+    const overlap=raExt+rbExt-Math.abs(dist);
+    if (overlap <= 0) return null;
+    if (!best || overlap < best.depth){
+      const sign = dist >= 0 ? 1 : -1;
+      best = { x:u.x*sign, z:u.z*sign, depth:overlap };
+    }
   }
-  return true;
+  return best;
 }
 
 function checkAICollisions(dt){
@@ -1666,16 +1664,17 @@ function checkAICollisions(dt){
     if (!a.mesh.visible) continue;
     const ap = a.mesh.position;
     if (Math.abs(pp.y - ap.y) > 2) continue;   // different bridge level
-    if (!carsOverlap(pp, player.yaw, ap, a.mesh.rotation.y)) continue;   // real body contact
     const dx = pp.x - ap.x, dz = pp.z - ap.z;
     const d = Math.sqrt(dx*dx + dz*dz) || 1;
-    pp.x += dx/d * 0.45;                       // gentle physical bump
-    pp.z += dz/d * 0.45;
+    const sep = carSeparation(pp, player.yaw, ap, a.mesh.rotation.y);
+    if (!sep) continue;                        // no real body contact
+    pp.x += sep.x * (sep.depth + 0.05);        // solid body: push out, don't pass through
+    pp.z += sep.z * (sep.depth + 0.05);
     const ry = a.mesh.rotation.y;
     const along = dx*Math.sin(ry) + dz*Math.cos(ry);       // + in front of rival, - behind it
     const lateral = dx*Math.cos(ry) - dz*Math.sin(ry);
     const rearHit = along < -Math.abs(lateral);            // struck the rival's back
-    const keep = rearHit ? 0.5 : 0.9;                      // 50% rear, 10% side
+    const keep = rearHit ? 0.8 : 0.9;                      // 20% rear, 10% side
     player.speed *= keep;
     player.targetSpeed *= keep;
     player.slip = Math.min(1, player.slip + 0.15);
@@ -1777,7 +1776,7 @@ function triggerManualBoost(){
   const sign = player.speed < 0 ? -1 : 1;
   player.speed = sign * Math.min(Math.abs(player.speed) * 1.2, MAX_SPEED * 1.2);
   player.targetSpeed = player.speed;
-  manualBoostTime = 1.5;
+  manualBoostTime = 2.0;
   manualBoostCooldown = 3;
   boostFlash = 1.2;
 }
@@ -1880,7 +1879,7 @@ function drawMinimap(){
   mctx.strokeStyle='#bbb'; mctx.lineWidth=1.5;
   mctx.stroke();
   FEATURES.forEach(f=>{
-    mctx.strokeStyle = f.type==='water' ? '#bfefff' : '#ff9933'; mctx.lineWidth = 3; mctx.beginPath();
+    mctx.strokeStyle = f.type==='water' ? '#bfefff' : '#ffcc00'; mctx.lineWidth = 3; mctx.beginPath();
     for (let i=f.from;i<=f.to;i++){ const m = toM(samples[((i%N)+N)%N].p); if (i===f.from) mctx.moveTo(m.x,m.y); else mctx.lineTo(m.x,m.y); }
     mctx.stroke();
   });
@@ -1915,46 +1914,6 @@ function drawMinimap(){
   mctx.strokeStyle='#fff'; mctx.lineWidth=1.5; mctx.stroke();
 }
 
-function drawStartMap(){
-  const map = document.getElementById('startMap');
-  if (!map || !map.getContext) return;
-  const ctx = map.getContext('2d');
-  const w = map.width, h = map.height;
-  ctx.clearRect(0,0,w,h);
-  ctx.fillStyle = '#050510'; ctx.fillRect(0,0,w,h);
-  let minX=Infinity,maxX=-Infinity,minZ=Infinity,maxZ=-Infinity;
-  samples.forEach(s=>{ minX=Math.min(minX,s.p.x); maxX=Math.max(maxX,s.p.x); minZ=Math.min(minZ,s.p.z); maxZ=Math.max(maxZ,s.p.z); });
-  const pad = 24;
-  const sc = Math.min((w-pad*2)/(maxX-minX), (h-pad*2)/(maxZ-minZ));
-  const ox = pad + (w-pad*2-(maxX-minX)*sc)/2 - minX*sc;
-  const oz = pad + (h-pad*2-(maxZ-minZ)*sc)/2 - minZ*sc;
-  const toM = p => ({ x:p.x*sc+ox, y:p.z*sc+oz });
-  const trace = (from,to) => {
-    ctx.beginPath();
-    for (let i=from;i<=to;i++){
-      const m = toM(samples[((i%N)+N)%N].p);
-      if (i===from) ctx.moveTo(m.x,m.y); else ctx.lineTo(m.x,m.y);
-    }
-  };
-  ctx.lineJoin='round'; ctx.lineCap='round';
-  ctx.strokeStyle='#2d2d38'; ctx.lineWidth=10; trace(0,N-1); ctx.closePath(); ctx.stroke();
-  ctx.strokeStyle='#b8bcc4'; ctx.lineWidth=3;  trace(0,N-1); ctx.closePath(); ctx.stroke();
-  FEATURES.forEach(f=>{
-    ctx.strokeStyle = f.type==='water' ? '#bfefff' : '#ff55cc';
-    ctx.lineWidth = 7; trace(f.from,f.to); ctx.stroke();
-  });
-  tunnels.forEach((t,i)=>{
-    const m = toM(samples[(t.from+(TL>>1))%N].p);
-    ctx.fillStyle='#ff55cc'; ctx.beginPath(); ctx.arc(m.x,m.y,6,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#fff'; ctx.font='bold 9px monospace';
-    ctx.fillText(t.name || ('T'+(i+1)), m.x+8, m.y-7);
-  });
-  const st = toM(samples[0].p);
-  ctx.fillStyle='#ffcc00'; ctx.fillRect(st.x-4,st.y-4,8,8);
-  ctx.fillStyle='#fff'; ctx.font='bold 10px monospace'; ctx.fillText('CIRCUIT MAP',10,16);
-  ctx.font='9px monospace'; ctx.fillText('TUNNELS '+tunnels.length+'   ICE '+waterCrossings.length+'   OVERPASSES '+crossings.length,10,h-8);
-}
-
 // ---------- HUD ----------
 function refreshLapUI(){
   const lapEl = document.getElementById('lap');
@@ -1978,9 +1937,12 @@ function updateHUD(){
   const gearTag = (player.edge > 0.05 ? '  [EDGE]' : '') + (player.drifting ? '  [DRIFT]' : (player.speed < -0.2 ? '  [REV]' : (gasOn ? '  [GAS]' : (brakeOn ? '  [BRAKE]' : ''))));
   document.getElementById('speed').textContent = 'SPEED ' + Math.round(Math.abs(player.speed)*3.6) + gearTag;
   const speedFill = document.getElementById('speedfill');
+  const speedMark = document.getElementById('speedmark');
   const speedVal = document.getElementById('speedmin');
   if (speedVal) speedVal.textContent = Math.round(Math.abs(player.speed)*3.6);
-  if (speedFill) speedFill.style.height = Math.min(100, Math.abs(player.speed)/HUD_MAX_SPEED*100) + '%';
+  const speedPct = Math.min(100, Math.abs(player.speed)/HUD_MAX_SPEED*100);
+  if (speedFill) speedFill.style.height = speedPct + '%';
+  if (speedMark) speedMark.style.bottom = speedPct + '%';
 }
 
 // ---------- Main loop ----------
@@ -2033,7 +1995,6 @@ function loop(now){
   drawMinimap();
   requestAnimationFrame(loop);
 }
-drawStartMap();
 refreshLapUI();
 applyEnvironment();
 requestAnimationFrame(loop);
@@ -2042,19 +2003,6 @@ requestAnimationFrame(loop);
 function tryStart(){ initAudio(); restart(); }
 document.getElementById('startBtn').addEventListener('click', tryStart);
 if (startRequested) tryStart();
-window.__puffs = () => {
-  const c = samples[waterCrossings[0].idx].p, out = [], m = new THREE.Matrix4(), p = new THREE.Vector3(), col = new THREE.Color();
-  const name = g => { for (const k in KINDS) if (KINDS[k] === g) return k; return 'mesh'; };
-  scene.traverse(o=>{
-    if (!o.isInstancedMesh) return;
-    const k = name(o.geometry);
-    for (let i=0;i<o.count;i++){
-      o.getMatrixAt(i,m); p.setFromMatrixPosition(m);
-      if (Math.hypot(p.x-c.x,p.z-c.z) < 200){ o.getColorAt(i,col); out.push({k,x:Math.round(p.x),z:Math.round(p.z),y:Math.round(p.y),rgb:col.getHexString()}); }
-    }
-  });
-  return out;
-};
 document.getElementById('resetBtn').addEventListener('click', ()=>{ restart(); });
 document.getElementById('pauseBtn').addEventListener('click', ()=>{
   if (state !== 'racing') return;
