@@ -14,45 +14,47 @@
   html, body { width:100%; height:100%; background:#000; overflow:hidden; font-family:'Press Start 2P', monospace; }
   #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000; }
   #gameCanvas { image-rendering: pixelated; image-rendering: crisp-edges; width:100%; height:100%; object-fit:contain; }
-  #hud { position:fixed; top:10px; left:10px; color:#fff; text-shadow:2px 2px 0 #000; font-size:10px; line-height:1.6; pointer-events:none; z-index:5; }
+  #hud { position:fixed; top:10px; left:10px; color:#aaa; text-shadow:2px 2px 0 #000; font-size:10px; line-height:1.6; pointer-events:none; z-index:5; }
   #hud .row { margin-bottom:4px; }
-  #minimap { position:fixed; top:170px; left:10px; border:2px solid #fff; image-rendering:pixelated; background:rgba(0,0,0,0.6); z-index:5; width:150px; height:150px; }
-  #overlay { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(0,0,0,0.85); color:#fff; z-index:10; text-align:center; gap:12px; }
+  #minimap { position:fixed; top:170px; left:10px; border:2px solid #aaa; image-rendering:pixelated; background:rgba(0,0,0,0.6); z-index:5; width:150px; height:150px; }
+  #overlay { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(0,0,0,0.85); color:#aaa; z-index:10; text-align:center; gap:12px; }
   #overlay h1 { font-size:24px; color:#2f80ed; }
-  #startMap { width:480px; height:300px; border:2px solid #fff; image-rendering:pixelated; background:#050510; }
+  #startMap { width:480px; height:300px; border:2px solid #aaa; image-rendering:pixelated; background:#050510; }
   #overlay p { font-size:10px; line-height:1.8; max-width:600px; }
-  #overlay button { padding:10px 20px; font-family:inherit; font-size:10px; background:#ff3333; color:#fff; border:2px solid #fff; cursor:pointer; }
+  #overlay button { padding:10px 20px; font-family:inherit; font-size:10px; background:#ff3333; color:#aaa; border:2px solid #aaa; cursor:pointer; }
   #overlay button:hover { background:#ff6666; }
-  #msg { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:16px; text-shadow:2px 2px 0 #000; pointer-events:none; z-index:8; display:none; }
-  #msg.countdown { font-size:48px; color:#ffcc00; }
+  #overlay #startBtn { color:#000; }
+  #credit { font-size:10px; color:#aaa; margin-top:4px; }
+  #msg { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); color:#aaa; font-size:16px; text-shadow:2px 2px 0 #000; pointer-events:none; z-index:8; display:none; }
+  #msg.countdown { font-size:48px; color:#aaa; }
   #speedlines { position:fixed; inset:0; z-index:4; pointer-events:none; opacity:0; transition:opacity 0.08s linear;
     background:repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg 9deg, rgba(255,255,255,0.16) 9deg 10deg, transparent 10deg 18deg);
     -webkit-mask-image:radial-gradient(circle at 50% 50%, transparent 32%, #000 78%);
     mask-image:radial-gradient(circle at 50% 50%, transparent 32%, #000 78%); }
-  #resetBtn { position:fixed; top:10px; right:10px; z-index:7; font-family:inherit; font-size:10px; padding:8px 14px; background:#ff3333; color:#fff; border:2px solid #fff; cursor:pointer; }
+  #resetBtn { position:fixed; top:10px; right:10px; z-index:7; font-family:inherit; font-size:10px; padding:8px 14px; background:#ff3333; color:#aaa; border:2px solid #aaa; cursor:pointer; }
   #resetBtn:hover { background:#ff6666; }
-  #pauseBtn { position:fixed; top:52px; right:10px; z-index:7; font-family:inherit; font-size:10px; padding:8px 14px; background:#3333ff; color:#fff; border:2px solid #fff; cursor:pointer; }
+  #pauseBtn { position:fixed; top:52px; right:10px; z-index:7; font-family:inherit; font-size:10px; padding:8px 14px; background:#3333ff; color:#aaa; border:2px solid #aaa; cursor:pointer; }
   #pauseBtn:hover { background:#6666ff; }
-  #helpBtn { position:fixed; top:94px; right:10px; z-index:7; font-family:inherit; font-size:10px; padding:8px 14px; background:#00aa55; color:#fff; border:2px solid #fff; cursor:pointer; }
+  #helpBtn { position:fixed; top:94px; right:10px; z-index:7; font-family:inherit; font-size:10px; padding:8px 14px; background:#00aa55; color:#aaa; border:2px solid #aaa; cursor:pointer; }
   #helpBtn:hover { background:#00cc66; }
   #helpPanel { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.85); z-index:12; }
-  #helpPanel .box { background:#101018; border:2px solid #fff; padding:18px 22px; color:#fff; text-align:left; font-size:10px; line-height:2; max-width:520px; }
-  #helpPanel h2 { color:#ffcc00; font-size:14px; margin-bottom:12px; text-align:center; }
-  #helpPanel .k { color:#33ccff; }
-  #helpPanel button { margin-top:14px; display:block; margin-left:auto; margin-right:auto; font-family:inherit; font-size:10px; padding:8px 16px; background:#ff3333; color:#fff; border:2px solid #fff; cursor:pointer; }
+  #helpPanel .box { background:#101018; border:2px solid #aaa; padding:18px 22px; color:#aaa; text-align:left; font-size:10px; line-height:2; max-width:520px; }
+  #helpPanel h2 { color:#aaa; font-size:14px; margin-bottom:12px; text-align:center; }
+  #helpPanel .k { color:#aaa; }
+  #helpPanel button { margin-top:14px; display:block; margin-left:auto; margin-right:auto; font-family:inherit; font-size:10px; padding:8px 16px; background:#ff3333; color:#aaa; border:2px solid #aaa; cursor:pointer; }
   #helpPanel button:hover { background:#ff6666; }
-  #speedbar { position:fixed; right:16px; top:50%; transform:translateY(-50%); z-index:6; display:flex; flex-direction:column; align-items:center; gap:6px; color:#fff; text-shadow:2px 2px 0 #000; font-size:8px; pointer-events:none; }
+  #speedbar { position:fixed; right:16px; top:50%; transform:translateY(-50%); z-index:6; display:flex; flex-direction:column; align-items:center; gap:6px; color:#aaa; text-shadow:2px 2px 0 #000; font-size:8px; pointer-events:none; }
   #speedmin { font-size:12px; letter-spacing:0.5px; }
   #speedunit { font-size:8px; letter-spacing:1px; opacity:0.8; margin-top:-4px; }
   #speedwrap { position:relative; width:26px; height:180px; }
-  #speedtrack { width:26px; height:180px; border:2px solid #fff; background:linear-gradient(to bottom,rgba(255,0,0,0.9) 0 16.667%,rgba(0,0,0,0.6) 16.667% 100%); position:relative; overflow:hidden; }
-  #speedmark { position:absolute; left:-8px; right:-8px; bottom:0; height:3px; background:#fff; box-shadow:0 0 0 1px #000; z-index:4; pointer-events:none; transition:bottom 0.08s linear; }
+  #speedtrack { width:26px; height:180px; border:2px solid #aaa; background:linear-gradient(to bottom,rgba(255,0,0,0.9) 0 16.667%,rgba(0,0,0,0.6) 16.667% 100%); position:relative; overflow:hidden; }
+  #speedmark { position:absolute; left:-8px; right:-8px; bottom:0; height:3px; background:#aaa; box-shadow:0 0 0 1px #000; z-index:4; pointer-events:none; transition:bottom 0.08s linear; }
   #redzone { position:absolute; left:0; right:0; top:0; height:16.667%; z-index:0; background:#ff0000; }
   #speedfill { position:absolute; left:0; bottom:0; width:100%; height:0%; z-index:1; background:linear-gradient(to top,#33cc33 0%,#ffcc00 60%,#ff2020 83.333%,#ff0000 100%); background-size:100% 180px; background-position:bottom; transition:height 0.08s linear; }
-  #speedtrack::before { content:''; position:absolute; left:0; right:0; bottom:83.333%; height:2px; z-index:3; pointer-events:none; background:#fff; }
+  #speedtrack::before { content:''; position:absolute; left:0; right:0; bottom:83.333%; height:2px; z-index:3; pointer-events:none; background:#aaa; }
   #sens { margin-top:2px; font-size:9px; letter-spacing:0.5px; white-space:nowrap; }
   #senslabel { margin-top:8px; font-size:8px; letter-spacing:1px; }
-  #senstrack { width:26px; height:80px; border:2px solid #fff; background:rgba(0,0,0,0.6); position:relative; overflow:hidden; }
+  #senstrack { width:26px; height:80px; border:2px solid #aaa; background:rgba(0,0,0,0.6); position:relative; overflow:hidden; }
   #sensfill { position:absolute; left:0; bottom:0; width:100%; height:50%; background:linear-gradient(to top,#0066ff,#33ccff); transition:height 0.08s linear; }
 </style>
 </head>
@@ -106,6 +108,7 @@
   <img id="startMap" src="circuit-map.png?v=2" width="480" height="300" alt="Circuit map">
   <p>YELLOW = TUNNELS (NORTH / WEST / EAST), LIGHT BLUE = ICE, RED SQUARE = START/FINISH.<br>Arrow keys: LEFT/RIGHT steer, UP accel, DOWN brake.<br>SHIFT = drift, \ = burst boost, A/Z = steering sensitivity up/down, R = restart, 1-9 = laps.<br>Complete <span class="lapGoal">1 lap</span> to win.</p>
   <button id="startBtn">START</button>
+  <div id="credit">&copy; 2026 Giles Richardson (GARCFD)</div>
 </div>
 <script type="module">
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
