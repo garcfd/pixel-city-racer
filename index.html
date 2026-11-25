@@ -7,7 +7,9 @@
 <meta http-equiv="Expires" content="0">
 <title>Pixel City Racer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<link rel="preload" as="image" href="circuit-map.png">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body { width:100%; height:100%; background:#000; overflow:hidden; font-family:'Press Start 2P', monospace; }
@@ -18,6 +20,7 @@
   #minimap { position:fixed; top:170px; left:10px; border:2px solid #fff; image-rendering:pixelated; background:rgba(0,0,0,0.6); z-index:5; width:150px; height:150px; }
   #overlay { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(0,0,0,0.85); color:#fff; z-index:10; text-align:center; gap:12px; }
   #overlay h1 { font-size:24px; color:#ffcc00; }
+  #startMap { width:480px; height:300px; border:2px solid #fff; image-rendering:pixelated; background:#050510; }
   #overlay p { font-size:10px; line-height:1.8; max-width:600px; }
   #overlay button { padding:10px 20px; font-family:inherit; font-size:10px; background:#ff3333; color:#fff; border:2px solid #fff; cursor:pointer; }
   #overlay button:hover { background:#ff6666; }
@@ -41,8 +44,11 @@
   #helpPanel button:hover { background:#ff6666; }
   #speedbar { position:fixed; right:16px; top:50%; transform:translateY(-50%); z-index:6; display:flex; flex-direction:column; align-items:center; gap:6px; color:#fff; text-shadow:2px 2px 0 #000; font-size:8px; pointer-events:none; }
   #speedmin { font-size:12px; letter-spacing:0.5px; }
-  #speedtrack { width:26px; height:180px; border:2px solid #fff; background:rgba(0,0,0,0.6); position:relative; overflow:hidden; }
-  #speedfill { position:absolute; left:0; bottom:0; width:100%; height:0%; background:linear-gradient(to top,#33cc33,#ffcc00,#ff3333); background-size:100% 180px; background-position:bottom; transition:height 0.08s linear; }
+  #speedunit { font-size:8px; letter-spacing:1px; opacity:0.8; margin-top:-4px; }
+  #speedtrack { width:26px; height:180px; border:2px solid #fff; background:linear-gradient(to bottom,rgba(255,0,0,0.9) 0 16.667%,rgba(0,0,0,0.6) 16.667% 100%); position:relative; overflow:hidden; }
+  #redzone { position:absolute; left:0; right:0; top:0; height:16.667%; z-index:0; background:#ff0000; }
+  #speedfill { position:absolute; left:0; bottom:0; width:100%; height:0%; z-index:1; background:linear-gradient(to top,#33cc33 0%,#ffcc00 60%,#ff2020 83.333%,#ff0000 100%); background-size:100% 180px; background-position:bottom; transition:height 0.08s linear; }
+  #speedtrack::before { content:''; position:absolute; left:0; right:0; bottom:83.333%; height:2px; z-index:3; pointer-events:none; background:#fff; }
   #sens { margin-top:2px; font-size:9px; letter-spacing:0.5px; white-space:nowrap; }
   #senslabel { margin-top:8px; font-size:8px; letter-spacing:1px; }
   #senstrack { width:26px; height:80px; border:2px solid #fff; background:rgba(0,0,0,0.6); position:relative; overflow:hidden; }
@@ -63,8 +69,9 @@
 </div>
 <!-- speed bar -->
 <div id="speedbar">
-  <div id="speedmax">200</div>
-  <div id="speedtrack"><div id="speedfill"></div></div>
+  <div id="speedmax">300</div>
+  <div id="speedunit">KPH</div>
+  <div id="speedtrack"><div id="redzone"></div><div id="speedfill"></div></div>
   <div id="speedmin">0</div>
   <div id="senslabel">SENS</div>
   <div id="senstrack"><div id="sensfill"></div></div>
@@ -83,6 +90,7 @@
     <span class="k">UP / DOWN</span> &mdash; adjust target speed (reverse at 0)<br>
     <span class="k">SHIFT</span> &mdash; drift (build score)<br>
     <span class="k">CYAN PADS</span> &mdash; speed boost<br>
+    <span class="k">\</span> &mdash; burst boost +20%<br>
     <span class="k">A / Z</span> &mdash; steering sensitivity up / down<br>
     <span class="k">W</span> &mdash; cycle weather<br>
     <span class="k">R</span> &mdash; restart<br>
@@ -94,7 +102,8 @@
 </div>
 <div id="overlay">
   <h1>PIXEL CITY RACER</h1>
-  <p>Arrow keys: LEFT/RIGHT steer, UP accel, DOWN brake.<br>SHIFT = drift, A/Z = steering sensitivity up/down, R = restart, 1-9 = laps.<br>Complete <span class="lapGoal">1 lap</span> to win.</p>
+  <img id="startMap" src="circuit-map.png" width="480" height="300" alt="Circuit map">
+  <p>PINK = TUNNELS (NORTH / WEST / EAST), LIGHT BLUE = ICE, YELLOW = START.<br>Arrow keys: LEFT/RIGHT steer, UP accel, DOWN brake.<br>SHIFT = drift, A/Z = steering sensitivity up/down, R = restart, 1-9 = laps.<br>Complete <span class="lapGoal">1 lap</span> to win.</p>
   <button id="startBtn">START</button>
 </div>
 <script type="module">
@@ -322,14 +331,40 @@ TERR_EXT += 130;
 // ---------- Bridges (over rivers) and tunnels (through hills) ----------
 const BR = { wc:30, R0:68, R1:120 };   // river half-width, river half-length, fade-out radius
 const TUN_H = 7.5, TL = 30;             // tunnel clearance height, tunnel length in samples
-const NB = 3, NT = 5;                 // how many bridges / tunnels to try to place
-const bridges = [], tunnels = [], FEATURES = [];
+const NW = 1, NT = 3;                   // southeast ice crossing / north-west-east tunnels
+const WATER_LEN = 30, WATER_HALF = WATER_LEN >> 1;  // long ice patch on the road surface
+const bridges = [], tunnels = [], waterCrossings = [], FEATURES = [];
 const bridgeOf = new Int8Array(N).fill(-1), tunnelOf = new Int8Array(N).fill(-1), moundOf = new Int8Array(N).fill(-1);
+const waterOf = new Int8Array(N).fill(-1);
 const occ = new Uint8Array(N);
 const cdist = (a,b)=>{ const d = Math.abs(a-b)%N; return Math.min(d, N-d); };
+const GRID_CELL = 64, sampleGrid = new Map();
+samples.forEach((s,i)=>{
+  const key = Math.floor(s.p.x/GRID_CELL)+','+Math.floor(s.p.z/GRID_CELL);
+  let cell = sampleGrid.get(key);
+  if (!cell){ cell = []; sampleGrid.set(key, cell); }
+  cell.push(i);
+});
+function nearbyClash(i0, gap){
+  if (gap <= 0) return false;
+  const rad = Math.ceil(gap/GRID_CELL);
+  for (let k=0;k<TL;k+=3){
+    const si = (i0+k)%N, a = samples[si].p;
+    const cx = Math.floor(a.x/GRID_CELL), cz = Math.floor(a.z/GRID_CELL);
+    for (let dx=-rad;dx<=rad;dx++) for (let dz=-rad;dz<=rad;dz++){
+      const cell = sampleGrid.get((cx+dx)+','+(cz+dz));
+      if (!cell) continue;
+      for (const j of cell){
+        if (cdist(j,si) <= TL+14) continue;
+        if (Math.hypot(samples[j].p.x-a.x, samples[j].p.z-a.z) < gap) return true;
+      }
+    }
+  }
+  return false;
+}
 for (let i=-30;i<=90;i++) occ[(i+N)%N] = 1;   // keep the start/finish clear
 for (const x of crossings){                    // keep bridge zones free of rivers/tunnels
-  for (let k=-40;k<=40;k++){
+  for (let k=-18;k<=18;k++){
     occ[(x.iu+k+N)%N] = 1;
     occ[(x.il+k+N)%N] = 1;
   }
@@ -345,54 +380,56 @@ function planBridge(i){
   }
   return { ic:i, cx:s.p.x, cz:s.p.z, tx, tz, j0, j1, worst, waterY:minY-4.5 };
 }
-for (let b=0;b<NB;b++){          // bridges go where the road is straight and high enough to span a river
-  let best = null;
+for (let w=0;w<NW;w++){          // single ice crossing on a clear southeast stretch
+  let best = -1, bestScore = Infinity;
   for (let i=0;i<N;i++){
-    if (samples[i].p.y < 14 || bridges.some(o=>cdist(o.ic,i) < N/(NB*2))) continue;
+    if (waterCrossings.some(o=>cdist(o.idx,i) < N/(NW*3))) continue;
     let free = true;
-    for (let j=-30;j<=30 && free;j++) if (occ[(i+j+N)%N]) free = false;
+    for (let j=-WATER_HALF;j<=WATER_HALF && free;j++) if (occ[(i+j+N)%N]) free = false;
     if (!free) continue;
-    const c = planBridge(i);
-    if (c.waterY < 2.2) continue;
-    let clash = false;
-    for (let j=0;j<N && !clash;j++){
-      if (cdist(j,i) <= 36) continue;
-      const rx = samples[j].p.x-c.cx, rz = samples[j].p.z-c.cz;
-      if (Math.abs(rx*c.tx + rz*c.tz) < BR.wc+16 && Math.hypot(rx,rz) < BR.R0+14) clash = true;
+    const s = samples[i], tl = Math.hypot(s.tan.x,s.tan.z) || 1;
+    const tx = s.tan.x/tl, tz = s.tan.z/tl;
+    let worst = 0;
+    for (let j=0;j<WATER_LEN+2;j++){
+      const q = samples[(i+j)%N].p;
+      worst = Math.max(worst, Math.abs(-tz*(q.x-s.p.x)+tx*(q.z-s.p.z)));
     }
-    if (clash) continue;
-    if (!best || c.worst < best.worst) best = c;
+    if (worst > 80) continue;
+    const score = (s.p.x-170)**2 + (s.p.z-306)**2;  // keep the original southeast ice patch
+    if (score < bestScore){ bestScore = score; best = i; }
   }
-  if (!best) break;
-  best.bed = best.waterY - Math.min(3.5, best.waterY-0.6);
-  const bi = bridges.length; bridges.push(best);
-  for (let j=-30;j<=30;j++) occ[(best.ic+j+N)%N] = 1;
-  for (let j=best.j0;j<=best.j1;j++) bridgeOf[(best.ic+j+N)%N] = bi;
-  FEATURES.push({ type:'bridge', from:best.ic+best.j0, to:best.ic+best.j1 });
+  if (best < 0) break;
+  const wi = waterCrossings.length; waterCrossings.push({ idx:best });
+  for (let j=-WATER_HALF;j<=WATER_HALF;j++) occ[(best+j+N)%N] = 1;
+  for (let j=-WATER_HALF;j<=WATER_HALF;j++) waterOf[(best+j+N)%N] = wi;
+  FEATURES.push({ type:'water', from:best-WATER_HALF, to:best+WATER_HALF });
 }
-for (let t=0;t<NT;t++){          // tunnels at random free stretches
-  for (let k=0;k<900;k++){
-    const i0 = Math.floor(Math.random()*N);
-    let free = true;
-    for (let j=-8;j<TL+8 && free;j++) if (occ[(i0+j+N)%N]) free = false;
-    if (!free || tunnels.some(o=>cdist(o.from,i0) < N/(NT*2))) continue;
-    let clash = false;
-    for (let k=0;k<TL && !clash;k+=3){
-      const a = samples[(i0+k)%N].p;
-      for (let j=0;j<N;j++){
-        if (cdist(j,(i0+k)%N) <= TL+14) continue;
-        if (Math.hypot(samples[j].p.x-a.x, samples[j].p.z-a.z) < 54){ clash = true; break; }
-      }
+const tunnelTargets = [
+  { name:'NORTH', score:p=>p.z },
+  { name:'WEST',  score:p=>p.x },
+  { name:'EAST',  score:p=>-p.x }
+];
+for (const target of tunnelTargets){  // one tunnel at each extreme of the circuit
+  let best = -1, bestD = Infinity;
+  for (const [sep,gap] of [[N/10,54],[N/20,40],[0,24],[0,0]]){
+    for (let i0=0;i0<N;i0++){
+      let free = true;
+      for (let j=-4;j<TL+4 && free;j++) if (occ[(i0+j+N)%N]) free = false;
+      if (!free || tunnels.some(o=>cdist(o.from,i0) < sep)) continue;
+      if (nearbyClash(i0, gap)) continue;
+      const mid = samples[(i0+(TL>>1))%N].p;
+      const d = target.score(mid);
+      if (d < bestD){ bestD = d; best = i0; }
     }
-    if (clash) continue;
-    const ti = tunnels.length;
-    tunnels.push({ from:i0, H:13+Math.random()*3 });
-    for (let j=-8;j<TL+8;j++) occ[(i0+j+N)%N] = 1;
-    for (let j=0;j<TL;j++) tunnelOf[(i0+j)%N] = ti;
-    for (let j=3;j<TL-3;j++) moundOf[(i0+j)%N] = ti;   // hill starts inside the tube so the portals stay open
-    FEATURES.push({ type:'tunnel', from:i0, to:i0+TL-1 });
-    break;
+    if (best >= 0) break;
   }
+  if (best < 0) continue;
+  const ti = tunnels.length;
+  tunnels.push({ from:best, H:13+Math.random()*3, name:target.name });
+  for (let j=-4;j<TL+4;j++) occ[(best+j+N)%N] = 1;
+  for (let j=0;j<TL;j++) tunnelOf[(best+j)%N] = ti;
+  for (let j=3;j<TL-3;j++) moundOf[(best+j)%N] = ti;   // hill starts inside the tube so the portals stay open
+  FEATURES.push({ type:'tunnel', from:best, to:best+TL-1 });
 }
 const HOLE_L = 20;   // half-width of the solid portal block
 function inHole(i, d){   // terrain cells in the portal zones are cut out (the portal block fills them)
@@ -533,14 +570,18 @@ const KINDS = {
 
 let waterTex = null;
 function ringStrip(rings, mat){
-  const n = rings[0].length, pos = [], idx = [];
-  rings.forEach(r=>r.forEach(v=>pos.push(v.x,v.y,v.z)));
+  const n = rings[0].length, pos = [], uv = [], idx = [];
+  rings.forEach((r,k)=>r.forEach((v,m)=>{
+    pos.push(v.x,v.y,v.z);
+    uv.push(m/Math.max(1,n-1), k/Math.max(1,rings.length-1));
+  }));
   for (let k=0;k<rings.length-1;k++) for (let m=0;m<n-1;m++){
     const a = k*n+m, b = a+1, c = a+n, d = c+1;
     idx.push(a,c,b, b,c,d);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv,2));
   g.setIndex(idx); g.computeVertexNormals();
   return new THREE.Mesh(g, mat);
 }
@@ -581,6 +622,31 @@ function buildFeatures(group){
     }
   });
 
+  const iceCanvas = document.createElement('canvas'); iceCanvas.width = iceCanvas.height = 64;
+  const ix = iceCanvas.getContext('2d');
+  ix.fillStyle = '#bfefff'; ix.fillRect(0,0,64,64);
+  for (let i=0;i<28;i++){
+    ix.strokeStyle = Math.random()<0.5 ? 'rgba(255,255,255,0.8)' : 'rgba(80,165,215,0.45)';
+    ix.lineWidth = 0.4 + Math.random()*1.4;
+    const y = Math.random()*64;
+    ix.beginPath(); ix.moveTo(-2,y);
+    ix.bezierCurveTo(18,y+(Math.random()-0.5)*9, 44,y+(Math.random()-0.5)*9, 66,y+(Math.random()-0.5)*5);
+    ix.stroke();
+  }
+  for (let i=0;i<9;i++){
+    ix.strokeStyle = 'rgba(255,255,255,0.55)'; ix.lineWidth = 0.5;
+    const x = Math.random()*64, y = Math.random()*64;
+    ix.beginPath(); ix.moveTo(x,y); ix.lineTo(x+3+Math.random()*7, y+(Math.random()-0.5)*8); ix.stroke();
+  }
+  const iceTex = new THREE.CanvasTexture(iceCanvas);
+  iceTex.wrapS = iceTex.wrapT = THREE.RepeatWrapping;
+  iceTex.repeat.set(1, Math.max(2, Math.round(WATER_LEN/6)));
+  iceTex.magFilter = iceTex.minFilter = THREE.LinearFilter;
+  const iceMat = new THREE.MeshBasicMaterial({ map:iceTex, color:0xffffff, transparent:true, opacity:0.86, side:THREE.DoubleSide, depthWrite:false });
+  waterCrossings.forEach(w=>{
+    const S = []; for (let j=-WATER_HALF;j<=WATER_HALF;j++) S.push(samples[(w.idx+j+N)%N]);
+    group.add(ringStrip(S.map(s=>[edge(s,-half,0.08), edge(s,half,0.08)]), iceMat));
+  });
   for (const x of crossings){
     const S = []; for (let k=x.kmin;k<=x.kmax;k++) S.push(samples[(x.iu+k+N)%N]);
     group.add(ringStrip(S.map(s=>[edge(s,-half,0), edge(s,-half,-2.4), edge(s,half,-2.4), edge(s,half,0)]), concrete));
@@ -597,14 +663,26 @@ function buildFeatures(group){
       });
     }
   }
-  const tunnelMat = new THREE.MeshLambertMaterial({ color:0x8a8b92, emissive:0x30323a, side:THREE.DoubleSide });
-  const lightMat = new THREE.MeshBasicMaterial({ color:0xfff0b0 });
+  const tunnelRoofMat = new THREE.MeshLambertMaterial({ color:0x8a8b92, emissive:0x30323a, side:THREE.DoubleSide });
+  const tunnelWallMat = new THREE.MeshLambertMaterial({ color:0x74757b, emissive:0x24262b, side:THREE.DoubleSide });
+  const lightMat = new THREE.MeshBasicMaterial({ color:0xffdf8a });
+  const glowCanvas = document.createElement('canvas'); glowCanvas.width = glowCanvas.height = 64;
+  const gx = glowCanvas.getContext('2d');
+  const gg = gx.createRadialGradient(32,32,0,32,32,32);
+  gg.addColorStop(0,'rgba(255,232,170,0.85)');
+  gg.addColorStop(0.35,'rgba(255,205,105,0.30)');
+  gg.addColorStop(1,'rgba(255,180,60,0)');
+  gx.fillStyle = gg; gx.fillRect(0,0,64,64);
+  const glowTex = new THREE.CanvasTexture(glowCanvas);
+  const glowMat = new THREE.SpriteMaterial({ map:glowTex, color:0xffe3a6, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending, depthWrite:false, fog:false });
   const W = half+3.5;   // wide enough that the chase camera stays inside on bends
   tunnels.forEach(t=>{
     const rings = [];
     for (let j=-1;j<=TL;j++){ const s = samples[(t.from+j+N)%N];
       rings.push([edge(s,-W,-0.3), edge(s,-W,TUN_H), edge(s,W,TUN_H), edge(s,W,-0.3)]); }
-    group.add(ringStrip(rings, tunnelMat));
+    group.add(ringStrip(rings.map(r=>[r[0],r[1]]), tunnelWallMat));
+    group.add(ringStrip(rings.map(r=>[r[1],r[2]]), tunnelRoofMat));
+    group.add(ringStrip(rings.map(r=>[r[2],r[3]]), tunnelWallMat));
     const floorMat = new THREE.MeshLambertMaterial({ color:0x4a4c52, side:THREE.DoubleSide });   // ground between the road edge and the tunnel walls
     const fl = []; for (let j=-1;j<=TL;j++) fl.push(samples[(t.from+j+N)%N]);
     [-1,1].forEach(sd=>group.add(ringStrip(fl.map(q=>[edge(q,sd*(W+0.5),-0.06), edge(q,sd*(half-0.3),-0.06)]), floorMat)));
@@ -627,7 +705,13 @@ function buildFeatures(group){
       group.add(ringStrip(S.map(q=>[edge(q, HOLE_L,-0.5), edge(q, HOLE_L,t.H)]), rockMat));
       group.add(ringStrip(S.map(q=>[edge(q,-HOLE_L,t.H), edge(q, HOLE_L,t.H)]), topMat));
     });
-    for (let j=1;j<TL;j+=3){ const s = samples[(t.from+j)%N]; [-4,4].forEach(lat=>mk(s,1.2,0.25,2,lat,TUN_H-0.15,lightMat)); } // ceiling lights
+    for (let j=1;j<TL;j+=3){ const s = samples[(t.from+j)%N]; [-4,4].forEach(lat=>{
+      mk(s,1.2,0.25,2,lat,TUN_H-0.15,lightMat);
+      const glow = new THREE.Sprite(glowMat);
+      glow.position.copy(edge(s,lat,TUN_H-0.9));
+      glow.scale.set(7,7,1);
+      group.add(glow);
+    }); } // ceiling lights with soft yellow fog glow
   });
 }
 
@@ -718,6 +802,7 @@ function buildScenery(group){
   buildFeatures(group);
   buildAlpineLandmarks(group);
   const inst = {};
+  const iceC = waterCrossings.length ? samples[waterCrossings[0].idx].p : null;
   const snowRock = new THREE.Color(1.5,1.55,1.7), grey = new THREE.Color(1,1,1), warm = new THREE.Color(1,0.72,0.5);
   const add = (kind,x,y,z,sx,sy,sz,tint)=>{ (inst[kind] = inst[kind] || []).push({x,y,z,sx,sy,sz,ry:Math.random()*6.28,tint}); };
   const shade = ()=>{ const v = 0.8 + Math.random()*0.3; return new THREE.Color(v,v,v); };
@@ -733,18 +818,21 @@ function buildScenery(group){
     const nn = nearestXZ(x,z);
     if (nn.d < TRACK_HALF+7 || inWater(x,z) || (tunnelOf[nn.i] >= 0 && nn.d < 26)) continue;
     const biome = sampleBiome[nn.i];
+    // only suppress the white roadside mounds (snowdrifts) at the ice section
+    const icePuffZone = waterCrossings.some(w=>cdist(nn.i,w.idx) < WATER_HALF + 30) ||
+                        (iceC && Math.hypot(x-iceC.x, z-iceC.z) < 260);
     const y = terrainHeight(x,z,nn);
     const r = Math.random(), sc = 0.8 + Math.random()*0.7;
     if (biome==='forest'){
       if (y > 34) continue;
       if (r < 0.76) add(y>20 ? 'snowPine' : 'pine', x,y-0.5,z, sc,sc*(0.9+Math.random()*0.5),sc, shade());
-      else if (r < 0.84 && nn.d > 28) add('snowdrift', x,y-0.2,z, 1.8+Math.random()*2.2,0.55,1.8+Math.random()*2.2, grey);
+      else if (r < 0.84 && nn.d > 28 && !icePuffZone) add('snowdrift', x,y-0.2,z, 1.8+Math.random()*2.2,0.55,1.8+Math.random()*2.2, grey);
       else add('leafy', x,y-0.5,z, sc,sc,sc, shade());
     } else if (biome==='alpine'){
       if (r < 0.48) add('snowPine', x,y-0.5,z, sc,sc*(0.9+Math.random()*0.6),sc, shade());
       else if (r < 0.66) add('rock', x,y-0.3,z, sc*1.5,sc*1.1,sc*1.3, snowRock);
       else if (r < 0.72) add('snowman', x,y-0.4,z, sc,sc,sc, grey);
-      else if (r < 0.82 && nn.d > 32) add('snowdrift', x,y-0.2,z, 2+Math.random()*3,0.7+Math.random()*0.6,2+Math.random()*3, grey);
+      else if (r < 0.82 && nn.d > 32 && !icePuffZone) add('snowdrift', x,y-0.2,z, 2+Math.random()*3,0.7+Math.random()*0.6,2+Math.random()*3, grey);
       else if (r < 0.855 && nn.d > 65) add('peak', x,y-1,z, 1.1+Math.random()*0.7,1.1+Math.random()*0.8,1.1+Math.random()*0.7, snowRock);
     } else if (biome==='desert'){
       if (r < 0.4) add('cactus', x,y-0.5,z, sc,sc,sc, shade());
@@ -897,12 +985,18 @@ function buildRoad() {
   return group;
 }
 
+// Let the browser paint the start screen and its static map before the heavy
+// world build blocks the main thread.  Clicks made during the build are queued.
+let startRequested = false;
+document.getElementById('startBtn').addEventListener('click', ()=>{ startRequested = true; });
+await new Promise(r=>setTimeout(r, 50));
+
 const world = buildRoad();
 scene.add(world);
 
 // ---------- Boost pads ----------
 const boostPads = [];
-const BOOST_PROGRESSES = [0.12, 0.33, 0.55, 0.77];
+const BOOST_PROGRESSES = [0.12, 0.33, 0.77];
 {
   const padGeo = new THREE.PlaneGeometry(12, 9);
   const stripeGeo = new THREE.PlaneGeometry(10, 1.1);
@@ -1080,7 +1174,12 @@ for (let i=0;i<aiColors.length;i++){
 }
 
 // player state
-const player = { mesh: playerCar, progress: 0.005, speed: 0, targetSpeed: 0, yaw: 0, moveYaw: 0, slip: 0, driftAmount: 0, steerAngle: 0, lap: 0, prevProgress: 0.005, finished:false, finishTime:0, edge:0, onWhiteLine:false };
+const player = { mesh: playerCar, progress: 0.005, speed: 0, targetSpeed: 0, yaw: 0, moveYaw: 0, slip: 0, driftAmount: 0, steerAngle: 0, lap: 0, prevProgress: 0.005, lapDist:0, dir:1, finished:false, finishTime:0, edge:0, onWhiteLine:false, bridgeTilt:0, airTime:0, airDuration:0, hop:0 };
+const START_PROGRESS = 0.005;
+function playerDist(){
+  return player.dir < 0 ? player.lap + START_PROGRESS - player.progress
+                        : player.lap + player.progress - START_PROGRESS;
+}
 
 // place player at start
 function placeAtProgress(carObj, prog, lateral){
@@ -1195,6 +1294,51 @@ function resetSmoke(){
   smoke.geometry.attributes.position.needsUpdate = true;
 }
 
+// water splash pool
+const SPLASH_MAX = 120;
+const splashGeo = new THREE.BufferGeometry();
+const splashPos = new Float32Array(SPLASH_MAX*3);
+const splashVel = new Float32Array(SPLASH_MAX*3);
+const splashLife = new Float32Array(SPLASH_MAX);
+for (let i=0;i<SPLASH_MAX;i++) splashPos[i*3+1] = -1000;
+splashGeo.setAttribute('position', new THREE.BufferAttribute(splashPos,3));
+const splashMat = new THREE.PointsMaterial({ color:0xe6faff, size:1.4, transparent:true, opacity:0.85, depthWrite:false });
+const splashes = new THREE.Points(splashGeo, splashMat);
+splashes.frustumCulled = false;
+scene.add(splashes);
+let splashCursor = 0;
+function resetSplashes(){
+  for (let i=0;i<SPLASH_MAX;i++){ splashLife[i]=0; splashPos[i*3+1]=-1000; }
+  splashGeo.attributes.position.needsUpdate = true;
+}
+function updateSplashes(dt){
+  for (let i=0;i<SPLASH_MAX;i++){
+    if (splashLife[i] <= 0) continue;
+    splashLife[i] -= dt;
+    if (splashLife[i] <= 0){ splashPos[i*3+1] = -1000; continue; }
+    splashVel[i*3+1] -= 16*dt;
+    splashPos[i*3] += splashVel[i*3]*dt;
+    splashPos[i*3+1] += splashVel[i*3+1]*dt;
+    splashPos[i*3+2] += splashVel[i*3+2]*dt;
+  }
+  if (state === 'racing' && !paused && !player.finished && waterOf[player.curIdx % N] >= 0 && Math.abs(player.speed) > 8){
+    const s = samples[player.curIdx % N];
+    for (let k=0;k<3;k++){
+      const side = k%2 === 0 ? -1 : 1;
+      const i = splashCursor++ % SPLASH_MAX;
+      const lat = side*(TRACK_HALF+0.8);
+      splashPos[i*3]   = s.p.x + s.side.x*lat;
+      splashPos[i*3+1] = s.p.y + 0.1;
+      splashPos[i*3+2] = s.p.z + s.side.z*lat;
+      splashVel[i*3]   = s.side.x*side*4 + (Math.random()-0.5)*2;
+      splashVel[i*3+1] = 3 + Math.random()*3;
+      splashVel[i*3+2] = s.side.z*side*4 + (Math.random()-0.5)*2;
+      splashLife[i] = 0.5 + Math.random()*0.4;
+    }
+  }
+  splashGeo.attributes.position.needsUpdate = true;
+}
+
 function updateParticles(dt){
   const pp = player.mesh.position;
   rain.position.set(pp.x, pp.y-8, pp.z); snow.position.copy(rain.position);
@@ -1255,6 +1399,7 @@ window.addEventListener('keydown', e=>{
   keys[k]=true;
   if (k==='w'){ weather = (weather+1)%4; applyEnvironment(); }
   if (k==='r'){ restart(); }
+  if (k==='\\' && !e.repeat){ triggerManualBoost(); e.preventDefault(); }
   if (/^[1-9]$/.test(k)){ totalLaps = Number(k); refreshLapUI(); }
   if (k==='escape'){ closeHelp(); }
   // Q = less steering, A = more steering (hold for fine adjustment)
@@ -1278,12 +1423,19 @@ function refreshSensUI(){
 refreshSensUI();
 
 // ---------- Physics ----------
-const MAX_SPEED = 200/3.6;   // 200 km/h
+const MAX_SPEED = 250/3.6;        // normal cap: 250 km/h
+const HUD_MAX_SPEED = 300/3.6;    // boost/bump range: 250-300 km/h
 const ACCEL = 28;
 const BRAKE = 40;
 const FRICTION = 12;
 const TURN_SPEED = 0.9;
 const SLOPE_K = 45; // how strongly hills slow you down / speed you up
+const HOP_TIME = 1.0, HOP_HEIGHT = 3.2;   // brief airborne pop over a fast bridge
+function atBridgeApex(i){
+  for (const x of crossings) if (cdist(i, x.iu) <= 2) return true;
+  for (const b of bridges) if (cdist(i, b.ic) <= 2) return true;
+  return false;
+}
 // White side stripes sit 2-4 texture pixels in from each road edge.  Touching
 // them is only a visual cue (small camera judder); the real penalty starts when
 // the car body actually reaches the road edge.
@@ -1297,7 +1449,10 @@ function updatePlayer(dt){
   if (player.finished) return;
   if (player.lap >= totalLaps){ player.finished=true; player.finishTime=raceTime; return; }
   boostTime = Math.max(0, boostTime - dt);
-  const speedCap = MAX_SPEED + (boostTime > 0 ? 25 : 0);
+  manualBoostTime = Math.max(0, manualBoostTime - dt);
+  manualBoostCooldown = Math.max(0, manualBoostCooldown - dt);
+  player.airTime = Math.max(0, player.airTime - dt);
+  const speedCap = MAX_SPEED * Math.max(boostTime > 0 ? 1.1 : 1, manualBoostTime > 0 ? 1.2 : 1);
   const up = keys['arrowup'];
   const down = keys['arrowdown'];
   const left = keys['arrowleft'];
@@ -1317,6 +1472,8 @@ function updatePlayer(dt){
   let grip = 1;
   if (weather===1) grip=0.7;
   if (weather===3) grip=0.5;
+  const onIce = player.curIdx !== undefined && waterOf[player.curIdx % N] >= 0;
+  if (onIce) grip *= 0.4;
   player.speed = Math.max(-18, Math.min(speedCap, player.speed));
   const steerInput = (left?1:0) - (right?1:0);
   // smooth steering with limit to prevent oversteer
@@ -1327,7 +1484,7 @@ function updatePlayer(dt){
   const speedFactor = Math.max(0.5, Math.min(1, Math.abs(player.speed)/15));
   // hold SHIFT to drift: extra steering for tight bends
   const steering = left || right;
-  const drifting = keys['shift'] && steering && Math.abs(player.speed) > 4;
+  const drifting = (keys['shift'] || onIce) && steering && Math.abs(player.speed) > 4;
   // drift state blends in and out smoothly (never a hard switch)
   const driftTarget = drifting ? 1 : 0;
   const driftRate = drifting ? 8 : 4;
@@ -1338,14 +1495,16 @@ function updatePlayer(dt){
   // target-slip-angle drift model: the nose leads the direction of travel by
   // a set angle proportional to the steering input, so the drift is
   // predictable, gets round tight bends, and can never spin out
-  const maxSlip = 0.7;
-  const targetSlip = drifting ? 0.55 * player.steerAngle : 0;
+  const maxSlip = onIce ? 0.9 : 0.7;
+  const targetSlip = drifting ? (onIce ? 0.8 : 0.55) * player.steerAngle : 0;
   player.slip = (player.slip || 0) + (targetSlip - (player.slip || 0)) * Math.min(1, 6*dt);
   player.slip = Math.max(-maxSlip, Math.min(maxSlip, player.slip));
 
   // while drifting the travel direction turns faster than normal, so the car
   // actually gets round the corner quicker instead of just sliding wide
-  const baseTurn = TURN_SPEED * speedFactor * (player.speed>=0?1:-1) * grip * steerSensitivity;
+  // extra low-speed authority makes a U-turn possible inside the road width
+  const turnBoost = 1 + 6*Math.max(0, 1 - Math.abs(player.speed)/20);
+  const baseTurn = TURN_SPEED * speedFactor * (player.speed>=0?1:-1) * grip * steerSensitivity * turnBoost;
   const pathTurn = baseTurn * (1 + 0.75*da);
   player.moveYaw += pathTurn * player.steerAngle * dt;
 
@@ -1358,7 +1517,6 @@ function updatePlayer(dt){
   const fwd = new THREE.Vector3(Math.sin(player.moveYaw), 0, Math.cos(player.moveYaw));
   player.mesh.position.add(fwd.multiplyScalar(player.speed*dt));
   player.mesh.rotation.y = player.yaw;
-  player.mesh.rotation.z = 0;
 
   // track edges: the penalty starts only when the angled car body reaches the
   // asphalt boundary; touching the white stripe is visual-only (camera judder).
@@ -1390,42 +1548,66 @@ function updatePlayer(dt){
       if (player.speed > FLOOR) player.speed = Math.max(FLOOR, player.speed - dec);
       else if (player.speed < -FLOOR) player.speed = Math.min(-FLOOR, player.speed + dec);
       if (over > 0.05 && player.speed > 8) player.targetSpeed = Math.min(player.targetSpeed, player.speed);
-      // ease the travel direction back along the track
+      // ease the travel direction back along the track, preserving whichever
+      // way the car is actually going (so a completed U-turn is not undone)
       const tan = info.sample.tan;
-      let targetYaw = Math.atan2(tan.x, tan.z);
-      if (player.speed < 0) targetYaw += Math.PI;
+      const trackYaw = Math.atan2(tan.x, tan.z);
+      const travelYaw = player.moveYaw + (player.speed < 0 ? Math.PI : 0);
+      const goingBackwards = Math.cos(travelYaw - trackYaw) < 0;
+      const targetTravel = trackYaw + (goingBackwards ? Math.PI : 0);
+      let targetYaw = targetTravel - (player.speed < 0 ? Math.PI : 0);
       let diff = targetYaw - player.moveYaw;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-      player.moveYaw += diff * Math.min(1, 2.5*over*dt);
+      const yawEase = (steering && Math.abs(player.speed) < 14) ? 0.3 : 2.5;
+      player.moveYaw += diff * Math.min(1, yawEase*over*dt);
       player.yaw = player.moveYaw + player.slip;
       player.mesh.rotation.y = player.yaw;
     }
   }
   // follow track elevation and pitch with the slope
+  player.mesh.position.y -= (player.hop || 0);   // keep ground lookup stable while airborne
   const elevInfo = nearestSample(player.mesh.position, player.curIdx);
-  player.mesh.position.y = elevationAt(player.mesh.position, elevInfo.index);
-  const ahead = samples[(elevInfo.index + 4) % samples.length];
-  const behind = samples[(elevInfo.index - 4 + samples.length) % samples.length];
+  const ei = elevInfo.index;
+  const onBridge = bridgeOf[ei] >= 0 || deckOf[(ei-5+N)%N] || deckOf[ei] || deckOf[(ei+5)%N];
+  const atApex = atBridgeApex(ei);
+  if (atApex && !bridgeApexPrev && !player.finished && Math.abs(player.speed)*3.6 >= 250){
+    yeeHaw();
+    player.airTime = HOP_TIME;
+    player.airDuration = HOP_TIME;
+  }
+  bridgeApexPrev = atApex;
+  const pp = player.mesh.position;
+  const groundY = elevationAt(pp, ei);
+  const hopPhase = player.airTime > 0 ? 1 - player.airTime/(player.airDuration || HOP_TIME) : 0;
+  player.hop = player.airTime > 0 ? Math.sin(hopPhase*Math.PI)*HOP_HEIGHT : 0;
+  player.mesh.position.y = groundY + player.hop;
+  const ahead = samples[(ei + 4) % samples.length];
+  const behind = samples[(ei - 4 + samples.length) % samples.length];
   const dy = ahead.p.y - behind.p.y;
   const dxz = Math.hypot(ahead.p.x - behind.p.x, ahead.p.z - behind.p.z) || 1;
   player.mesh.rotation.order = 'YXZ';
-  player.mesh.rotation.x = -Math.atan2(dy, dxz);
+  player.bridgeTilt += ((onBridge ? 1 : 0) - player.bridgeTilt) * Math.min(1, dt*5);
+  player.mesh.rotation.x = -Math.atan2(dy, dxz) - 0.07*player.bridgeTilt - player.hop*0.06;
   // grade in the direction of travel (+ = uphill)
   const tanS = elevInfo.sample.tan;
   const along = Math.sin(player.moveYaw)*tanS.x + Math.cos(player.moveYaw)*tanS.z;
-  player.grade = (dy/dxz) * (along>=0?1:-1) * (player.speed>=0?1:-1);
+  player.grade = onBridge ? 0 : (dy/dxz) * (along>=0?1:-1) * (player.speed>=0?1:-1);
   player.curIdx = elevInfo.index;
 
-  // progress along track
-  // find nearest sample index
+  // progress along track, forwards or backwards
   const idx = info.index;
   const prog = idx / (samples.length-1);
-  // wrap detection
-  if (player.prevProgress > 0.8 && prog < 0.2) {
+  let dp = prog - player.prevProgress;
+  if (dp > 0.5) dp -= 1;
+  else if (dp < -0.5) dp += 1;
+  if (Math.abs(dp) > 0.0001) player.dir = dp > 0 ? 1 : -1;
+  player.lapDist += dp;
+  if (Math.abs(player.lapDist) >= 1){
     const lapTime = raceTime - lapStartTime;
     if (lapTime > 0.1 && (bestLap === 0 || lapTime < bestLap)) bestLap = lapTime;
     lapStartTime = raceTime;
     player.lap++;
+    player.lapDist += player.lapDist > 0 ? -1 : 1;
     if (player.lap >= totalLaps){ player.finished=true; player.finishTime=raceTime; }
   }
   player.prevProgress = prog;
@@ -1458,7 +1640,7 @@ function updateAI(car, dt){
   car.mesh.rotation.y = Math.atan2(tan.x, tan.z);
   // slight per-car speed variation plus rubber-banding toward the player
   const variation = Math.sin(car.progress*Math.PI*8 + car.phase)*3;
-  const gap = (player.lap + player.progress) - ((car.lap||0) + car.progress);
+  const gap = playerDist() - ((car.lap||0) + car.progress);
   const rubber = Math.max(-4, Math.min(6, gap*18));
   car.speed = Math.max(18, Math.min(48, car.baseSpeed + variation + rubber));
 }
@@ -1489,8 +1671,13 @@ function checkAICollisions(dt){
     const d = Math.sqrt(dx*dx + dz*dz) || 1;
     pp.x += dx/d * 0.45;                       // gentle physical bump
     pp.z += dz/d * 0.45;
-    player.speed *= 0.78;                      // mild slowdown
-    player.targetSpeed *= 0.78;
+    const ry = a.mesh.rotation.y;
+    const along = dx*Math.sin(ry) + dz*Math.cos(ry);       // + in front of rival, - behind it
+    const lateral = dx*Math.cos(ry) - dz*Math.sin(ry);
+    const rearHit = along < -Math.abs(lateral);            // struck the rival's back
+    const keep = rearHit ? 0.5 : 0.9;                      // 50% rear, 10% side
+    player.speed *= keep;
+    player.targetSpeed *= keep;
     player.slip = Math.min(1, player.slip + 0.15);
     aiBumpCooldown = 0.35;                     // avoid repeated hits every frame
     bumpShake = 0.16;
@@ -1543,6 +1730,7 @@ let raceTime = 0;
 let totalLaps = 1;   // press 1-9 to change at any time
 let aiBumpCooldown = 0;
 let bumpShake = 0;
+let bridgeApexPrev = false;
 let aiPassed = false;
 const AI_OUT_OF_VIEW = 30;   // metres behind before the rival is recycled
 
@@ -1567,7 +1755,7 @@ function updateAIRival(dt){
   const a = aiCars[0];
   if (!a) return;
   updateAI(a, dt);
-  const behind = ((player.lap + player.progress) - ((a.lap||0) + a.progress)) * totalLen;
+  const behind = (playerDist() - ((a.lap||0) + a.progress)) * totalLen;
   if (behind > 0 && !aiPassed) aiPassed = true;
   if (aiPassed && behind > AI_OUT_OF_VIEW) placeAIAhead();
 }
@@ -1582,6 +1770,17 @@ let driftTime = 0;
 let driftCombo = 1;
 let boostFlash = 0;
 let boostTime = 0;
+let manualBoostTime = 0, manualBoostCooldown = 0;
+
+function triggerManualBoost(){
+  if (state !== 'racing' || paused || player.finished || manualBoostCooldown > 0) return;
+  const sign = player.speed < 0 ? -1 : 1;
+  player.speed = sign * Math.min(Math.abs(player.speed) * 1.2, MAX_SPEED * 1.2);
+  player.targetSpeed = player.speed;
+  manualBoostTime = 1.5;
+  manualBoostCooldown = 3;
+  boostFlash = 1.2;
+}
 
 function updateDriftScore(dt){
   const active = state === 'racing' && !paused && !player.finished && player.drifting && Math.abs(player.speed) > 4;
@@ -1607,33 +1806,35 @@ function checkBoostPads(dt){
     const along = dx*s.tan.x + dz*s.tan.z;       // forward distance from pad centre
     const lateral = dx*s.side.x + dz*s.side.z;   // sideways distance
     if (Math.abs(along) <= 4.5 && Math.abs(lateral) <= 6 && Math.abs(pp.y - s.p.y) < 3){
-      player.speed = Math.min(MAX_SPEED + 25, player.speed + 25);
+      player.speed = Math.min(MAX_SPEED * 1.1, player.speed * 1.1);
       player.targetSpeed = player.speed;
-      boostTime = 1.2;
+      boostTime = 2.0;
       p.cooldown = 1.6;
-      boostFlash = 0.8;
+      boostFlash = 1.2;
     }
   }
 }
 
 function updateRacePosition(){
-  const myDist = player.lap + player.progress;
+  const myDist = playerDist();
   let ahead = 0;
   for (const a of aiCars) if (a.mesh.visible && (a.lap||0) + a.progress > myDist) ahead++;
   racePosition = ahead + 1;
 }
 
 function restart(){
-  player.progress = 0.005; player.prevProgress=0.005; player.speed=0; player.targetSpeed=0; player.yaw=0; player.moveYaw=0; player.slip=0; player.driftAmount=0; player.steerAngle=0; player.lap=0; player.finished=false; player.finishTime=0; player.curIdx=undefined; player.edge=0; player.onWhiteLine=false;
+  player.progress = 0.005; player.prevProgress=0.005; player.speed=0; player.targetSpeed=0; player.yaw=0; player.moveYaw=0; player.slip=0; player.driftAmount=0; player.steerAngle=0; player.lap=0; player.lapDist=0; player.dir=1; player.finished=false; player.finishTime=0; player.curIdx=undefined; player.edge=0; player.onWhiteLine=false; player.bridgeTilt=0; player.airTime=0; player.airDuration=0; player.hop=0;
   placeAtProgress(player, 0.005, 0);
   placeAIAhead();
   aiBumpCooldown = 0;
   bumpShake = 0;
+  bridgeApexPrev = false;
   bestLap = 0; lapStartTime = 0; racePosition = 1;
   driftScore = 0; driftChain = 0; driftTime = 0; driftCombo = 1;
-  boostFlash = 0; boostTime = 0;
+  boostFlash = 0; boostTime = 0; manualBoostTime = 0; manualBoostCooldown = 0;
   boostPads.forEach(p=>{ p.cooldown = 0; });
   resetSmoke();
+  resetSplashes();
   // put the camera behind the car before the countdown starts
   camAnchor.copy(player.mesh.position);
   camFwd.set(Math.sin(player.yaw),0,Math.cos(player.yaw));
@@ -1679,17 +1880,20 @@ function drawMinimap(){
   mctx.strokeStyle='#bbb'; mctx.lineWidth=1.5;
   mctx.stroke();
   FEATURES.forEach(f=>{
-    mctx.strokeStyle = f.type==='bridge' ? '#33aaff' : '#ff9933'; mctx.lineWidth = 3; mctx.beginPath();
+    mctx.strokeStyle = f.type==='water' ? '#bfefff' : '#ff9933'; mctx.lineWidth = 3; mctx.beginPath();
     for (let i=f.from;i<=f.to;i++){ const m = toM(samples[((i%N)+N)%N].p); if (i===f.from) mctx.moveTo(m.x,m.y); else mctx.lineTo(m.x,m.y); }
     mctx.stroke();
   });
-  // completed portion fills in green as the car covers the circuit
-  const done = Math.max(0, Math.min(1, (player.lap + player.progress) / totalLaps));
+  // completed portion fills in green in the direction the car is travelling
+  const done = Math.max(0, Math.min(1, playerDist() / totalLaps));
   if (done > 0){
     const steps = Math.max(1, Math.ceil((samples.length-1)*done));
     mctx.strokeStyle='#22dd55'; mctx.lineWidth=4;
     mctx.beginPath();
-    for (let i=0;i<=steps;i++){ const m=toM(samples[i].p); if(i===0) mctx.moveTo(m.x,m.y); else mctx.lineTo(m.x,m.y); }
+    for (let k=0;k<=steps;k++){
+      const i = player.dir < 0 ? ((N - k) % N + N) % N : k;
+      const m=toM(samples[i].p); if(k===0) mctx.moveTo(m.x,m.y); else mctx.lineTo(m.x,m.y);
+    }
     mctx.stroke();
     mctx.strokeStyle='#aaffbf'; mctx.lineWidth=1.5; mctx.stroke();
   }
@@ -1711,6 +1915,46 @@ function drawMinimap(){
   mctx.strokeStyle='#fff'; mctx.lineWidth=1.5; mctx.stroke();
 }
 
+function drawStartMap(){
+  const map = document.getElementById('startMap');
+  if (!map || !map.getContext) return;
+  const ctx = map.getContext('2d');
+  const w = map.width, h = map.height;
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle = '#050510'; ctx.fillRect(0,0,w,h);
+  let minX=Infinity,maxX=-Infinity,minZ=Infinity,maxZ=-Infinity;
+  samples.forEach(s=>{ minX=Math.min(minX,s.p.x); maxX=Math.max(maxX,s.p.x); minZ=Math.min(minZ,s.p.z); maxZ=Math.max(maxZ,s.p.z); });
+  const pad = 24;
+  const sc = Math.min((w-pad*2)/(maxX-minX), (h-pad*2)/(maxZ-minZ));
+  const ox = pad + (w-pad*2-(maxX-minX)*sc)/2 - minX*sc;
+  const oz = pad + (h-pad*2-(maxZ-minZ)*sc)/2 - minZ*sc;
+  const toM = p => ({ x:p.x*sc+ox, y:p.z*sc+oz });
+  const trace = (from,to) => {
+    ctx.beginPath();
+    for (let i=from;i<=to;i++){
+      const m = toM(samples[((i%N)+N)%N].p);
+      if (i===from) ctx.moveTo(m.x,m.y); else ctx.lineTo(m.x,m.y);
+    }
+  };
+  ctx.lineJoin='round'; ctx.lineCap='round';
+  ctx.strokeStyle='#2d2d38'; ctx.lineWidth=10; trace(0,N-1); ctx.closePath(); ctx.stroke();
+  ctx.strokeStyle='#b8bcc4'; ctx.lineWidth=3;  trace(0,N-1); ctx.closePath(); ctx.stroke();
+  FEATURES.forEach(f=>{
+    ctx.strokeStyle = f.type==='water' ? '#bfefff' : '#ff55cc';
+    ctx.lineWidth = 7; trace(f.from,f.to); ctx.stroke();
+  });
+  tunnels.forEach((t,i)=>{
+    const m = toM(samples[(t.from+(TL>>1))%N].p);
+    ctx.fillStyle='#ff55cc'; ctx.beginPath(); ctx.arc(m.x,m.y,6,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 9px monospace';
+    ctx.fillText(t.name || ('T'+(i+1)), m.x+8, m.y-7);
+  });
+  const st = toM(samples[0].p);
+  ctx.fillStyle='#ffcc00'; ctx.fillRect(st.x-4,st.y-4,8,8);
+  ctx.fillStyle='#fff'; ctx.font='bold 10px monospace'; ctx.fillText('CIRCUIT MAP',10,16);
+  ctx.font='9px monospace'; ctx.fillText('TUNNELS '+tunnels.length+'   ICE '+waterCrossings.length+'   OVERPASSES '+crossings.length,10,h-8);
+}
+
 // ---------- HUD ----------
 function refreshLapUI(){
   const lapEl = document.getElementById('lap');
@@ -1726,17 +1970,17 @@ function updateHUD(){
   document.getElementById('drift').textContent = 'DRIFT ' + driftScore + (driftChain > 0 ? ' +' + Math.round(driftChain) + ' x' + driftCombo : '');
   const speedLines = document.getElementById('speedlines');
   if (speedLines){
-    const fast = Math.max(0, (Math.abs(player.speed)/MAX_SPEED - 0.65)/0.35);
+    const fast = Math.max(0, (Math.abs(player.speed)/(220/3.6) - 0.65)/0.35);
     speedLines.style.opacity = Math.min(0.9, fast*0.45 + boostFlash*0.9).toFixed(3);
   }
   const zi = player.curIdx !== undefined ? player.curIdx % N : 0;
-  document.getElementById('zone').textContent = BIOMES[sampleBiome[zi]].name + '  ALT ' + Math.round(player.mesh.position.y) + (bridgeOf[zi] >= 0 ? '  [BRIDGE]' : '') + (tunnelOf[zi] >= 0 ? '  [TUNNEL]' : '') + (deckOf[zi] ? '  [OVERPASS]' : '');
+  document.getElementById('zone').textContent = BIOMES[sampleBiome[zi]].name + '  ALT ' + Math.round(player.mesh.position.y) + (bridgeOf[zi] >= 0 ? '  [BRIDGE]' : '') + (tunnelOf[zi] >= 0 ? '  [TUNNEL]' : '') + (waterOf[zi] >= 0 ? '  [ICE]' : '') + (deckOf[zi] ? '  [OVERPASS]' : '');
   const gearTag = (player.edge > 0.05 ? '  [EDGE]' : '') + (player.drifting ? '  [DRIFT]' : (player.speed < -0.2 ? '  [REV]' : (gasOn ? '  [GAS]' : (brakeOn ? '  [BRAKE]' : ''))));
   document.getElementById('speed').textContent = 'SPEED ' + Math.round(Math.abs(player.speed)*3.6) + gearTag;
   const speedFill = document.getElementById('speedfill');
   const speedVal = document.getElementById('speedmin');
   if (speedVal) speedVal.textContent = Math.round(Math.abs(player.speed)*3.6);
-  if (speedFill) speedFill.style.height = Math.min(100, Math.abs(player.speed)/MAX_SPEED*100) + '%';
+  if (speedFill) speedFill.style.height = Math.min(100, Math.abs(player.speed)/HUD_MAX_SPEED*100) + '%';
 }
 
 // ---------- Main loop ----------
@@ -1769,6 +2013,7 @@ function loop(now){
       updateRacePosition();
       updateCamera(dt);
       updateParticles(dt);
+      updateSplashes(dt);
       if (player.finished){
         state='finished';
         const msg = document.getElementById('msg');
@@ -1788,6 +2033,7 @@ function loop(now){
   drawMinimap();
   requestAnimationFrame(loop);
 }
+drawStartMap();
 refreshLapUI();
 applyEnvironment();
 requestAnimationFrame(loop);
@@ -1795,6 +2041,20 @@ requestAnimationFrame(loop);
 // ---------- Start ----------
 function tryStart(){ initAudio(); restart(); }
 document.getElementById('startBtn').addEventListener('click', tryStart);
+if (startRequested) tryStart();
+window.__puffs = () => {
+  const c = samples[waterCrossings[0].idx].p, out = [], m = new THREE.Matrix4(), p = new THREE.Vector3(), col = new THREE.Color();
+  const name = g => { for (const k in KINDS) if (KINDS[k] === g) return k; return 'mesh'; };
+  scene.traverse(o=>{
+    if (!o.isInstancedMesh) return;
+    const k = name(o.geometry);
+    for (let i=0;i<o.count;i++){
+      o.getMatrixAt(i,m); p.setFromMatrixPosition(m);
+      if (Math.hypot(p.x-c.x,p.z-c.z) < 200){ o.getColorAt(i,col); out.push({k,x:Math.round(p.x),z:Math.round(p.z),y:Math.round(p.y),rgb:col.getHexString()}); }
+    }
+  });
+  return out;
+};
 document.getElementById('resetBtn').addEventListener('click', ()=>{ restart(); });
 document.getElementById('pauseBtn').addEventListener('click', ()=>{
   if (state !== 'racing') return;
@@ -1823,9 +2083,6 @@ function closeHelp(){
 }
 document.getElementById('helpBtn').addEventListener('click', openHelp);
 document.getElementById('helpClose').addEventListener('click', closeHelp);
-
-// auto-start shortly after load
-setTimeout(tryStart, 300);
 
 // ---------- Audio ----------
 let audioCtx=null, engineOsc=null, engineOsc2=null, engineGain=null;
@@ -1888,15 +2145,23 @@ function beep(freq, dur){
   o.start(t);
   o.stop(t + dur + 0.02);
 }
+const yeeAudio = new Audio('yeehaa.mp3');
+yeeAudio.volume = 1;
+yeeAudio.preload = 'auto';
+function yeeHaw(){
+  yeeAudio.currentTime = 0;
+  const p = yeeAudio.play();
+  if (p && p.catch) p.catch(()=>{});
+}
 function updateAudio(){
   if (!audioCtx || !engineOsc) return;
   const engineOn = state === 'racing' && !paused && !player.finished;
-  const sp = engineOn ? Math.min(1, Math.abs(player.speed)/MAX_SPEED) : 0;
-  const f = 30 + sp*75;
+  const sp = engineOn ? Math.min(1, Math.abs(player.speed)/HUD_MAX_SPEED) : 0;
+  const f = 30 + sp*110;
   const now = audioCtx.currentTime;
   engineOsc.frequency.setTargetAtTime(f, now, 0.05);
   engineOsc2.frequency.setTargetAtTime(f*1.5, now, 0.05);
-  engineGain.gain.setTargetAtTime(engineOn ? 0.03 + sp*0.12 : 0, now, 0.03);
+  engineGain.gain.setTargetAtTime(engineOn ? 0.03 + sp*0.16 : 0, now, 0.03);
   if (skidGain && skidFilter){
     const drifting = engineOn && player.drifting && Math.abs(player.speed) > 4;
     const driftAmt = drifting ? Math.max(0.2, player.driftAmount || 0) : 0;
